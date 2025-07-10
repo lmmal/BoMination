@@ -1,0 +1,22 @@
+# BoMination Application - Quick Start
+
+## IMPORTANT: Java Required
+This application requires Java to extract tables from PDF files.
+If Java is not installed, the app will prompt you to download it.
+
+## For Sales Team Members:
+1. Double-click `BoMinationApp.exe` to launch the application
+2. If Windows shows a security warning, click "More info" then "Run anyway"
+3. If prompted about Java, follow the link to download and install Java
+4. Follow the USER_GUIDE.md for detailed instructions
+
+## What's Included:
+- BoMinationApp.exe (90.3 MB) - The main application
+- USER_GUIDE.md - Step-by-step instructions  
+- deploy.bat - Optional test script
+
+## No Installation Required!
+This is a portable application - just double-click and run.
+(Java installation may be required if not already present)
+
+For technical support, contact your IT department.
