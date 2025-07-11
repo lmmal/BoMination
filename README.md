@@ -40,7 +40,7 @@ BoMination/
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-username/BoMination.git
+   git clone https://github.com/lmmal/BoMination.git
    cd BoMination
    ```
 
