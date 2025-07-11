@@ -42,8 +42,8 @@ def extract_tables_with_tabula(pdf_path, pages):
                 pages=pages,
                 multiple_tables=True,
                 lattice=True,
-                java_options="-Dfile.encoding=UTF-8",
-                pandas_options={'header': None, 'encoding': 'utf-8'}
+                java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US",
+                pandas_options={'header': None}  # Remove encoding to let Tabula handle it
             )
             print(f"Lattice method extracted {len(tables)} tables")
         except Exception as e:
@@ -51,16 +51,48 @@ def extract_tables_with_tabula(pdf_path, pages):
             print("Trying stream method...")
             
             # Fallback to stream method
-            tables = tabula.read_pdf(
-                pdf_path,
-                pages=pages,
-                multiple_tables=True,
-                stream=True,
-                guess=False,  # Don't guess table areas
-                java_options="-Dfile.encoding=UTF-8",
-                pandas_options={'header': None, 'encoding': 'utf-8'}
-            )
-            print(f"Stream method extracted {len(tables)} tables")
+            try:
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages=pages,
+                    multiple_tables=True,
+                    stream=True,
+                    guess=False,  # Don't guess table areas
+                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US",
+                    pandas_options={'header': None}  # Remove encoding to let Tabula handle it
+                )
+                print(f"Stream method extracted {len(tables)} tables")
+            except Exception as e2:
+                print(f"Stream method failed: {e2}")
+                print("Trying stream method with auto-detection...")
+                
+                # Final fallback: stream with guess=True for complex layouts
+                try:
+                    tables = tabula.read_pdf(
+                        pdf_path,
+                        pages=pages,
+                        multiple_tables=True,
+                        stream=True,
+                        guess=True,  # Allow Tabula to auto-detect structure
+                        java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US",
+                        pandas_options={'header': None}
+                    )
+                    print(f"Stream method with auto-detection extracted {len(tables)} tables")
+                except Exception as e3:
+                    print(f"Stream method with auto-detection failed: {e3}")
+                    print("Trying with ISO-8859-1 encoding...")
+                    
+                    # Last resort: try with different encoding
+                    tables = tabula.read_pdf(
+                        pdf_path,
+                        pages=pages,
+                        multiple_tables=True,
+                        stream=True,
+                        guess=True,
+                        java_options="-Dfile.encoding=ISO-8859-1 -Duser.language=en -Duser.country=US",
+                        pandas_options={'header': None}
+                    )
+                    print(f"ISO-8859-1 encoding extracted {len(tables)} tables")
         
         # Clean and process the extracted tables
         cleaned_tables = []
@@ -200,6 +232,84 @@ def clean_farrell_columns(df):
     if len(df) > 0:
         print(f"🔧 FARRELL DEBUG: Sample of final data:\n{df.head(2)}")
     print("🔧 FARRELL DEBUG: ===== END FARRELL PROCESSING =====\n")
+    return df
+
+def clean_nel_columns(df):
+    """Clean NEL-specific table formatting, handling their schematic BOM structure."""
+    print(f"\n🔧 NEL DEBUG: Original table shape: {df.shape}")
+    print(f"🔧 NEL DEBUG: First few rows:\n{df.head(8)}")
+    if df.empty:
+        print("🔧 NEL DEBUG: Empty dataframe passed to clean_nel_columns")
+        return df
+
+    # Define header keywords for NEL BOMs (common in schematics)
+    header_keywords = [
+        'ITEM', 'QTY', 'QUANTITY', 'PART', 'NUMBER', 'DESCRIPTION', 'DESC', 'REFERENCE', 'REF', 'DESIGNATOR',
+        'VALUE', 'PACKAGE', 'FOOTPRINT', 'MANUFACTURER', 'MFG', 'MPN', 'VENDOR', 'SUPPLIER'
+    ]
+    
+    best_score = 0
+    best_idx = 0
+    for idx in range(min(15, len(df))):  # Scan first 15 rows for best header (schematics can have more header info)
+        row = df.iloc[idx]
+        non_empty_cells = row.dropna().astype(str).str.upper().str.strip()
+        score = sum(any(kw in cell for kw in header_keywords) for cell in non_empty_cells)
+        print(f"🔧 NEL DEBUG: Row {idx} header score: {score} - {non_empty_cells.tolist()}")
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    print(f"🔧 NEL DEBUG: Selected header row index: {best_idx} (score: {best_score})")
+
+    # Set the detected header row as columns
+    new_columns = df.iloc[best_idx].fillna('').astype(str).str.strip()
+    for i, col in enumerate(new_columns):
+        if col == '' or col == 'nan':
+            new_columns.iloc[i] = f'Column_{i}'
+    df.columns = new_columns
+    # Remove all rows up to and including the header row
+    df = df.iloc[best_idx + 1:].reset_index(drop=True)
+    print(f"🔧 NEL DEBUG: After header extraction - columns: {df.columns.tolist()}")
+    print(f"🔧 NEL DEBUG: After header extraction - shape: {df.shape}")
+
+    # Remove any duplicate header rows
+    df = df[~df.apply(lambda row: row.astype(str).str.strip().tolist() == df.columns.astype(str).tolist(), axis=1)]
+    df = df.reset_index(drop=True)
+
+    # Handle common NEL column standardization
+    column_mapping = {
+        'ITEM': 'Item',
+        'QTY': 'Quantity',
+        'QUANTITY': 'Quantity',
+        'PART NUMBER': 'Part Number',
+        'PART': 'Part Number',
+        'DESCRIPTION': 'Description',
+        'DESC': 'Description',
+        'REFERENCE': 'Reference',
+        'REF': 'Reference',
+        'DESIGNATOR': 'Reference',
+        'VALUE': 'Value',
+        'PACKAGE': 'Package',
+        'FOOTPRINT': 'Footprint',
+        'MANUFACTURER': 'Manufacturer',
+        'MFG': 'Manufacturer',
+        'MPN': 'MPN',
+        'VENDOR': 'Vendor',
+        'SUPPLIER': 'Supplier'
+    }
+    
+    # Apply column mapping
+    for old_col, new_col in column_mapping.items():
+        for col in df.columns:
+            if old_col in str(col).upper():
+                df.rename(columns={col: new_col}, inplace=True)
+                print(f"🔧 NEL DEBUG: Renamed '{col}' to '{new_col}'")
+                break
+
+    print(f"🔧 NEL DEBUG: Final table shape: {df.shape}")
+    print(f"🔧 NEL DEBUG: Final columns: {df.columns.tolist()}")
+    if len(df) > 0:
+        print(f"🔧 NEL DEBUG: Sample of final data:\n{df.head(2)}")
+    print("🔧 NEL DEBUG: ===== END NEL PROCESSING =====\n")
     return df
 
 def format_table_as_text(table):
@@ -597,6 +707,9 @@ def merge_tables_and_export(tables, output_path, sheet_name="Combined_BoM", comp
         if company == "farrell":
             print("📊 MERGE DEBUG: Applying Farrell-specific table formatting...")
             merged_df = clean_farrell_columns(merged_df)
+        elif company == "nel":
+            print("📊 MERGE DEBUG: Applying NEL-specific table formatting...")
+            merged_df = clean_nel_columns(merged_df)
         else:
             print(f"📊 MERGE DEBUG: No company-specific formatting applied (company='{company}')")
 
