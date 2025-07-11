@@ -189,7 +189,14 @@ def run_main_pipeline_direct(pdf_path, pages, company, output_directory):
         print("✓ BoM extraction completed")
         
         # Generate the expected merged file path after extraction
-        merged_path = generate_output_path(pdf_path, "_merged", output_directory)
+        # IMPORTANT: Always look for merged files in PDF directory, not output directory
+        # The extraction process saves files to PDF directory regardless of output_directory setting
+        pdf_dir = Path(pdf_path).parent
+        pdf_name = Path(pdf_path).stem
+        merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
+        
+        print(f"Looking for merged file in PDF directory: {merged_path}")
+        print(f"(Output directory setting: {output_directory or 'None - using PDF directory'})")
         
         # Step 2: Lookup prices
         print("\nSTEP 2: Looking up supplier prices...")
@@ -200,33 +207,59 @@ def run_main_pipeline_direct(pdf_path, pages, company, output_directory):
         if not os.path.exists(merged_path):
             raise Exception(f"Cannot proceed with price lookup: merged file not found at {merged_path}")
         
+        print(f"Input file for price lookup: {merged_path}")
+        print(f"File exists: {os.path.exists(merged_path)}")
+        print(f"File size: {os.path.getsize(merged_path)} bytes")
+        
         try:
+            print("Attempting to start price lookup process...")
             lookup_main()
-            print("✓ Price lookup completed")
+            print("✓ Price lookup completed successfully")
         except Exception as lookup_error:
-            print(f"❌ Price lookup failed: {lookup_error}")
+            print(f"❌ Price lookup failed with error: {lookup_error}")
             print("This error prevents price data from being retrieved.")
             print("The pipeline will continue with the merged file, but prices will not be available.")
             
             # Log the full error for debugging
             import traceback
-            print(f"Full error details: {traceback.format_exc()}")
+            print(f"Full error traceback:")
+            print(traceback.format_exc())
             
-            # Don't suppress the error - let users see what's wrong
-            # But continue with the pipeline using merged file as fallback
-            print("Continuing without price data...")
+            # Provide specific guidance based on error type
+            error_str = str(lookup_error).lower()
+            if "chromedriver" in error_str or "chrome" in error_str:
+                print("\n🔧 ChromeDriver Issue Detected:")
+                print("- Ensure Chrome browser is installed and up to date")
+                print("- Verify chromedriver.exe is in the src folder")
+                print("- Check that antivirus isn't blocking chromedriver.exe")
+                print("- Try updating ChromeDriver to match your Chrome version")
+            elif "timeout" in error_str:
+                print("\n🔧 Timeout Issue Detected:")
+                print("- Check your internet connection")
+                print("- The website might be temporarily unavailable")
+                print("- Try running the pipeline again in a few minutes")
+            elif "connection" in error_str:
+                print("\n🔧 Connection Issue Detected:")
+                print("- Check your internet connection")
+                print("- Corporate firewall might be blocking the connection")
+                print("- Try running from a different network")
+            
+            print("\nContinuing without price data...")
         
-        # Generate the expected prices file path - check if it exists
-        if output_directory and output_directory.strip():
-            prices_path = generate_output_path(merged_path, "_with_prices", output_directory)
-        else:
-            prices_path = os.path.splitext(merged_path)[0] + "_with_prices.xlsx"
+        # Generate the expected prices file path
+        # IMPORTANT: Price lookup saves files to PDF directory, not output directory
+        # The lookup_price.py saves files next to the input file (merged_path)
+        prices_path = os.path.splitext(merged_path)[0] + "_with_prices.xlsx"
+        
+        print(f"Looking for prices file: {prices_path}")
         
         # If price lookup failed, use the merged file as fallback
         if not os.path.exists(prices_path):
             print(f"⚠️ Price file not found: {prices_path}")
             print(f"Using merged file as fallback: {merged_path}")
             prices_path = merged_path
+        else:
+            print(f"✅ Price file found: {prices_path}")
         
         # Step 3: Map to cost sheet
         print("\nSTEP 3: Mapping to OMNI cost sheet template...")

@@ -156,9 +156,19 @@ def upload_file_to_bomtool(driver, file_path):
             except:
                 raise Exception("File processing appears to have failed - export option not available")
         
-        # ⏳ Wait for pricing data to load (reduced from 45 seconds for better performance)
-        print("⏳ Waiting 15 seconds for pricing data to load...")
-        time.sleep(15)
+        # ⏳ Wait for pricing data to load dynamically based on number of parts
+        # Count the number of parts in the input file to determine wait time
+        try:
+            df = pd.read_excel(file_path)
+            part_count = len(df)
+            # Wait 1.2 seconds per part, with minimum 5 seconds and maximum 180 seconds
+            wait_time = max(5, min(180, int(part_count * 1.2)))
+            print(f"⏳ Found {part_count} parts in BOM - waiting {wait_time} seconds for pricing data to load...")
+            time.sleep(wait_time)
+        except Exception as e:
+            # Fallback to 15 seconds if we can't read the file for some reason
+            print(f"⚠️ Could not count parts ({e}), using default 15 second wait...")
+            time.sleep(15)
 
         # Step 5: Click Export dropdown using JS (to ensure it actually opens)
         print("📥 Opening export dropdown...")
