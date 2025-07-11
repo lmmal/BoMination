@@ -30,69 +30,158 @@ def extract_tables_with_tabula(pdf_path, pages):
         print(f"\nExtracting tables from pages: {pages} ...")
         print(f"PDF path: {pdf_path}")
         
+        # Handle path encoding issues
+        try:
+            # Ensure the PDF path is properly encoded
+            if isinstance(pdf_path, str):
+                pdf_path = pdf_path.encode('utf-8', errors='ignore').decode('utf-8')
+            print(f"Normalized PDF path: {pdf_path}")
+        except Exception as path_error:
+            print(f"Warning: Could not normalize PDF path: {path_error}")
+        
         # Check if running in PyInstaller environment
         if getattr(sys, 'frozen', False):
             print("Running in PyInstaller environment")
             print(f"JAVA_TOOL_OPTIONS: {os.environ.get('JAVA_TOOL_OPTIONS', 'Not set')}")
         
-        # Try lattice method first
+        # Set environment variables to handle encoding issues
+        original_java_options = os.environ.get('JAVA_TOOL_OPTIONS', '')
+        os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US'
+        
+        tables = []
+        
+        # Method 1: Try lattice method first
         try:
+            print("Attempting lattice method...")
             tables = tabula.read_pdf(
                 pdf_path,
                 pages=pages,
                 multiple_tables=True,
                 lattice=True,
-                java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US",
-                pandas_options={'header': None}  # Remove encoding to let Tabula handle it
+                java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                pandas_options={'header': None}
             )
-            print(f"Lattice method extracted {len(tables)} tables")
+            print(f"✅ Lattice method extracted {len(tables)} tables")
+        except (UnicodeDecodeError, UnicodeError) as unicode_error:
+            print(f"❌ Lattice method failed with Unicode error: {unicode_error}")
+            print("🔄 Skipping to encoding-specific methods...")
+            tables = []
         except Exception as e:
-            print(f"Lattice method failed: {e}")
-            print("Trying stream method...")
+            print(f"❌ Lattice method failed: {e}")
+            # Check if it's a UTF-8 related error
+            if 'utf-8' in str(e).lower() or 'codec' in str(e).lower():
+                print("🔄 Detected encoding issue, skipping to encoding-specific methods...")
+                tables = []
+            else:
+                tables = []
             
-            # Fallback to stream method
+        # Method 2: If UTF-8 error detected, try ISO-8859-1 immediately
+        if not tables:
+            # Check if previous error was UTF-8 related
             try:
+                print("Attempting with ISO-8859-1 encoding (Windows-1252 compatible)...")
+                os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=ISO-8859-1 -Duser.language=en -Duser.country=US'
                 tables = tabula.read_pdf(
                     pdf_path,
                     pages=pages,
                     multiple_tables=True,
                     stream=True,
-                    guess=False,  # Don't guess table areas
-                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US",
-                    pandas_options={'header': None}  # Remove encoding to let Tabula handle it
+                    guess=True,
+                    java_options="-Dfile.encoding=ISO-8859-1 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                    pandas_options={'header': None}
                 )
-                print(f"Stream method extracted {len(tables)} tables")
-            except Exception as e2:
-                print(f"Stream method failed: {e2}")
-                print("Trying stream method with auto-detection...")
+                print(f"✅ ISO-8859-1 encoding extracted {len(tables)} tables")
+            except Exception as e:
+                print(f"❌ ISO-8859-1 encoding failed: {e}")
+                tables = []
                 
-                # Final fallback: stream with guess=True for complex layouts
-                try:
-                    tables = tabula.read_pdf(
-                        pdf_path,
-                        pages=pages,
-                        multiple_tables=True,
-                        stream=True,
-                        guess=True,  # Allow Tabula to auto-detect structure
-                        java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US",
-                        pandas_options={'header': None}
-                    )
-                    print(f"Stream method with auto-detection extracted {len(tables)} tables")
-                except Exception as e3:
-                    print(f"Stream method with auto-detection failed: {e3}")
-                    print("Trying with ISO-8859-1 encoding...")
-                    
-                    # Last resort: try with different encoding
-                    tables = tabula.read_pdf(
-                        pdf_path,
-                        pages=pages,
-                        multiple_tables=True,
-                        stream=True,
-                        guess=True,
-                        java_options="-Dfile.encoding=ISO-8859-1 -Duser.language=en -Duser.country=US",
-                        pandas_options={'header': None}
-                    )
-                    print(f"ISO-8859-1 encoding extracted {len(tables)} tables")
+        # Method 3: Try CP1252 encoding (Windows default)
+        if not tables:
+            try:
+                print("Attempting with CP1252 encoding...")
+                os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=CP1252 -Duser.language=en -Duser.country=US'
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages=pages,
+                    multiple_tables=True,
+                    stream=True,
+                    guess=True,
+                    java_options="-Dfile.encoding=CP1252 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                    pandas_options={'header': None}
+                )
+                print(f"✅ CP1252 encoding extracted {len(tables)} tables")
+            except Exception as e:
+                print(f"❌ CP1252 encoding failed: {e}")
+                tables = []
+        
+        # Method 4: Try stream method if encoding methods failed
+        if not tables:
+            try:
+                print("Attempting stream method...")
+                os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US'
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages=pages,
+                    multiple_tables=True,
+                    stream=True,
+                    guess=False,
+                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                    pandas_options={'header': None}
+                )
+                print(f"✅ Stream method extracted {len(tables)} tables")
+            except Exception as e:
+                print(f"❌ Stream method failed: {e}")
+                tables = []
+        
+        # Method 5: Try stream with auto-detection
+        if not tables:
+            try:
+                print("Attempting stream method with auto-detection...")
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages=pages,
+                    multiple_tables=True,
+                    stream=True,
+                    guess=True,
+                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                    pandas_options={'header': None}
+                )
+                print(f"✅ Stream with auto-detection extracted {len(tables)} tables")
+            except Exception as e:
+                print(f"❌ Stream with auto-detection failed: {e}")
+                tables = []
+                
+        # Method 6: Last resort - try without any encoding specification
+        if not tables:
+            try:
+                print("Attempting without encoding specification...")
+                os.environ['JAVA_TOOL_OPTIONS'] = '-Duser.language=en -Duser.country=US'
+                tables = tabula.read_pdf(
+                    pdf_path,
+                    pages=pages,
+                    multiple_tables=True,
+                    stream=True,
+                    guess=True,
+                    java_options="-Duser.language=en -Duser.country=US -Djava.awt.headless=true"
+                    # No pandas_options at all
+                )
+                print(f"✅ No encoding specification extracted {len(tables)} tables")
+            except Exception as e:
+                print(f"❌ No encoding specification failed: {e}")
+                tables = []
+        
+        # Restore original JAVA_TOOL_OPTIONS
+        if original_java_options:
+            os.environ['JAVA_TOOL_OPTIONS'] = original_java_options
+        elif 'JAVA_TOOL_OPTIONS' in os.environ:
+            del os.environ['JAVA_TOOL_OPTIONS']
+            
+        # Report extraction results
+        if tables:
+            print(f"🎉 Successfully extracted {len(tables)} tables using one of the fallback methods")
+        else:
+            print("❌ All extraction methods failed - no tables extracted")
+            return []
         
         # Clean and process the extracted tables
         cleaned_tables = []
