@@ -218,7 +218,9 @@ def upload_file_to_bomtool(driver, file_path):
         
         # Save to the same directory as the input file (PDF directory)
         input_path_obj = Path(file_path)
-        dest_path = input_path_obj.parent / f"{input_path_obj.stem}_with_prices.xlsx"
+        # Remove "_merged" suffix from stem to avoid double naming
+        base_name = input_path_obj.stem.replace("_merged", "")
+        dest_path = input_path_obj.parent / f"{base_name}_merged_with_prices.xlsx"
         
         print(f"📁 Moving price data to: {dest_path}")
         shutil.move(src_path, dest_path)

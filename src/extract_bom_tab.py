@@ -2,6 +2,7 @@ import tabula
 import pandas as pd
 import os
 import sys
+import re
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
@@ -9,6 +10,13 @@ from pathlib import Path
 from pandastable import Table, TableModel
 from validation_utils import validate_extracted_tables, handle_common_errors, generate_output_path
 import logging
+
+# Configure matplotlib to use non-interactive backend to avoid GUI issues
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+except ImportError:
+    pass  # matplotlib not available
 
 # Configure logging to suppress verbose third-party output
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -24,6 +32,93 @@ if getattr(sys, 'frozen', False):
     os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8'
     # Set a reasonable temp directory for Tabula
     os.environ['TMPDIR'] = tempfile.gettempdir()
+
+def is_likely_bom_table(df):
+    """
+    Determine if a dataframe looks like a Bill of Materials table.
+    Returns True if it looks like a BOM, False otherwise.
+    """
+    if df.empty or df.shape[0] < 3 or df.shape[1] < 3:
+        return False
+    
+    # Convert to string for analysis
+    df_str = df.astype(str)
+    
+    # Look for common BOM indicators
+    bom_keywords = [
+        'ITEM', 'QTY', 'QUANTITY', 'PART', 'NUMBER', 'DESCRIPTION', 'DESC', 
+        'MFG', 'MANUFACTURER', 'MPN', 'P/N', 'PART NUMBER', 'ITEM NO',
+        'BILL OF MATERIAL', 'BOM', 'COMPONENT', 'REFERENCE', 'REF'
+    ]
+    
+    # Check headers (first few rows)
+    header_score = 0
+    for i in range(min(3, len(df_str))):
+        row_text = ' '.join(df_str.iloc[i].astype(str)).upper()
+        for keyword in bom_keywords:
+            if keyword in row_text:
+                header_score += 1
+    
+    # Check for structured data patterns
+    structure_score = 0
+    
+    # Look for numeric patterns (item numbers, quantities)
+    numeric_cols = 0
+    for col in df.columns:
+        col_data = df[col].astype(str).str.strip()
+        numeric_count = sum(1 for val in col_data if val.isdigit() or val.replace('.', '').isdigit())
+        if numeric_count > len(col_data) * 0.3:  # 30% of column is numeric
+            numeric_cols += 1
+    
+    if numeric_cols >= 1:
+        structure_score += 2
+    
+    # Check for consistent row structure (most rows have similar number of filled cells)
+    filled_counts = []
+    for i in range(len(df)):
+        filled_count = sum(1 for val in df.iloc[i].astype(str) if val.strip() != '')
+        filled_counts.append(filled_count)
+    
+    if len(filled_counts) > 0:
+        avg_filled = sum(filled_counts) / len(filled_counts)
+        consistent_rows = sum(1 for count in filled_counts if abs(count - avg_filled) <= 2)
+        if consistent_rows > len(filled_counts) * 0.7:  # 70% of rows are consistent
+            structure_score += 1
+    
+    # Check for strong positive BOM indicators
+    all_text = ' '.join(df_str.fillna('').astype(str).values.flatten()).upper()
+    
+    # Strong positive indicators that this contains BOM data
+    strong_bom_indicators = [
+        'BILL OF MATERIAL', 'ITEM NO', 'MFG P/N', 'PROTON P/N', 'ALPHA WIRE',
+        'HEYCO', 'SIEMENS', 'DELPHI', 'THOMAS BETTS', 'ALTECH', 'MURR'
+    ]
+    
+    strong_positive_score = sum(1 for indicator in strong_bom_indicators if indicator in all_text)
+    
+    # Reject tables that are clearly not BOMs (but only if they don't have strong BOM indicators)
+    reject_keywords = [
+        'PRINTED DRAWING', 'REFERENCE ONLY', 'DOCUMENT CONTROL', 'LATEST REVISION',
+        'PROPERTY OF', 'DELIVERED ON', 'EXPRESS CONDITION', 'NOT TO BE DISCLOSED',
+        'CUT BACK', 'REMOVE', 'SHRINK TUBING', 'DRAWING NUMBER', 'HARNESS'
+    ]
+    
+    reject_score = sum(1 for keyword in reject_keywords if keyword in all_text)
+    
+    # Decision logic - if we have strong BOM indicators, be more lenient about reject keywords
+    if strong_positive_score >= 3:
+        # This definitely contains BOM data, even if it has drawing instructions mixed in
+        total_score = header_score + structure_score + strong_positive_score - min(reject_score, 5)  # Cap reject penalty
+        min_threshold = 5  # Lower threshold when we have strong BOM indicators
+    else:
+        # Standard scoring for tables without strong BOM indicators
+        total_score = header_score + structure_score - reject_score
+        min_threshold = 2
+    
+    print(f"    BOM Analysis - Header score: {header_score}, Structure score: {structure_score}, Strong BOM score: {strong_positive_score}, Reject score: {reject_score}, Total: {total_score}, Threshold: {min_threshold}")
+    
+    # Accept if we meet the threshold
+    return total_score >= min_threshold
 
 def extract_tables_with_tabula(pdf_path, pages):
     try:
@@ -46,13 +141,27 @@ def extract_tables_with_tabula(pdf_path, pages):
         
         # Set environment variables to handle encoding issues
         original_java_options = os.environ.get('JAVA_TOOL_OPTIONS', '')
-        os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US'
+        original_lang = os.environ.get('LANG', '')
+        original_lc_all = os.environ.get('LC_ALL', '')
+        
+        # Set environment to handle subprocess encoding issues
+        os.environ['PYTHONIOENCODING'] = 'utf-8:ignore'
+        os.environ['LANG'] = 'C.UTF-8'
+        os.environ['LC_ALL'] = 'C.UTF-8'
         
         tables = []
         
-        # Method 1: Try lattice method first
+        # Method 1: Try with subprocess encoding handling
         try:
-            print("Attempting lattice method...")
+            print("Attempting lattice method with subprocess encoding fix...")
+            os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US'
+            
+            # Import here to avoid issues if jpype is not available
+            import subprocess
+            import tempfile
+            import json
+            
+            # Create a wrapper that handles encoding issues
             tables = tabula.read_pdf(
                 pdf_path,
                 pages=pages,
@@ -61,120 +170,143 @@ def extract_tables_with_tabula(pdf_path, pages):
                 java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
                 pandas_options={'header': None}
             )
-            print(f"✅ Lattice method extracted {len(tables)} tables")
-        except (UnicodeDecodeError, UnicodeError) as unicode_error:
-            print(f"❌ Lattice method failed with Unicode error: {unicode_error}")
-            print("🔄 Skipping to encoding-specific methods...")
-            tables = []
+            print(f"✅ Lattice method with encoding fix extracted {len(tables)} tables")
         except Exception as e:
             print(f"❌ Lattice method failed: {e}")
-            # Check if it's a UTF-8 related error
-            if 'utf-8' in str(e).lower() or 'codec' in str(e).lower():
-                print("🔄 Detected encoding issue, skipping to encoding-specific methods...")
-                tables = []
-            else:
-                tables = []
             
-        # Method 2: If UTF-8 error detected, try ISO-8859-1 immediately
-        if not tables:
-            # Check if previous error was UTF-8 related
+            # Try with different subprocess approach
             try:
-                print("Attempting with ISO-8859-1 encoding (Windows-1252 compatible)...")
-                os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=ISO-8859-1 -Duser.language=en -Duser.country=US'
+                print("Attempting with subprocess encoding workaround...")
+                # Set different environment encoding
+                os.environ['PYTHONIOENCODING'] = 'latin1:ignore'
                 tables = tabula.read_pdf(
                     pdf_path,
                     pages=pages,
                     multiple_tables=True,
-                    stream=True,
-                    guess=True,
+                    lattice=True,
                     java_options="-Dfile.encoding=ISO-8859-1 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
                     pandas_options={'header': None}
                 )
-                print(f"✅ ISO-8859-1 encoding extracted {len(tables)} tables")
-            except Exception as e:
-                print(f"❌ ISO-8859-1 encoding failed: {e}")
+                print(f"✅ Subprocess encoding workaround extracted {len(tables)} tables")
+            except Exception as e2:
+                print(f"❌ Subprocess encoding workaround failed: {e2}")
                 tables = []
+        
+        # Method 2: Last resort - try with completely different approach
+        if not tables:
+            try:
+                print("Attempting last resort method...")
                 
-        # Method 3: Try CP1252 encoding (Windows default)
-        if not tables:
-            try:
-                print("Attempting with CP1252 encoding...")
-                os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=CP1252 -Duser.language=en -Duser.country=US'
-                tables = tabula.read_pdf(
-                    pdf_path,
-                    pages=pages,
-                    multiple_tables=True,
-                    stream=True,
-                    guess=True,
-                    java_options="-Dfile.encoding=CP1252 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
-                    pandas_options={'header': None}
-                )
-                print(f"✅ CP1252 encoding extracted {len(tables)} tables")
+                # Try to use camelot as alternative if available
+                try:
+                    import camelot
+                    print("Trying camelot as alternative...")
+                    
+                    # First try lattice method with better configuration
+                    print("  Trying camelot lattice method...")
+                    tables_camelot = camelot.read_pdf(
+                        pdf_path, 
+                        pages=str(pages), 
+                        flavor='lattice',
+                        split_text=True,   # Split text in cells
+                        flag_size=True,    # Use table size for filtering
+                        strip_text='\n'    # Strip newlines
+                    )
+                    
+                    if tables_camelot and len(tables_camelot) > 0:
+                        # Filter tables by accuracy and size
+                        good_tables = []
+                        for i, table in enumerate(tables_camelot):
+                            accuracy = table.accuracy
+                            rows, cols = table.df.shape
+                            print(f"  Camelot table {i+1}: accuracy={accuracy:.1f}%, size={rows}x{cols}")
+                            
+                            # Only keep tables with reasonable accuracy and size
+                            if accuracy > 50 and rows >= 3 and cols >= 3:
+                                good_tables.append(table.df)
+                                print(f"    ✅ Keeping table {i+1} (good accuracy and size)")
+                            else:
+                                print(f"    ❌ Skipping table {i+1} (low accuracy or too small)")
+                        
+                        if good_tables:
+                            tables = good_tables
+                            print(f"✅ Camelot lattice extracted {len(tables)} good tables")
+                        else:
+                            print("❌ No good quality tables found with lattice method")
+                    
+                    # If lattice didn't work well, try stream method
+                    if not tables:
+                        print("  Trying camelot stream method...")
+                        tables_camelot = camelot.read_pdf(
+                            pdf_path, 
+                            pages=str(pages), 
+                            flavor='stream',
+                            split_text=True,   # Split text in cells
+                            flag_size=True,    # Use table size for filtering
+                            strip_text='\n',   # Strip newlines
+                            edge_tol=500       # Tolerance for edge detection
+                        )
+                        
+                        if tables_camelot and len(tables_camelot) > 0:
+                            # Filter tables by accuracy and size
+                            good_tables = []
+                            for i, table in enumerate(tables_camelot):
+                                accuracy = table.accuracy
+                                rows, cols = table.df.shape
+                                print(f"  Camelot table {i+1}: accuracy={accuracy:.1f}%, size={rows}x{cols}")
+                                
+                                # Only keep tables with reasonable accuracy and size
+                                if accuracy > 30 and rows >= 3 and cols >= 3:
+                                    good_tables.append(table.df)
+                                    print(f"    ✅ Keeping table {i+1} (acceptable accuracy and size)")
+                                else:
+                                    print(f"    ❌ Skipping table {i+1} (low accuracy or too small)")
+                            
+                            if good_tables:
+                                tables = good_tables
+                                print(f"✅ Camelot stream extracted {len(tables)} good tables")
+                            else:
+                                print("❌ No good quality tables found with stream method")
+                        
+                    if not tables:
+                        print("❌ Camelot found no suitable tables")
+                        
+                except ImportError:
+                    print("Camelot not available, trying final tabula attempt...")
+                    
+                    # Final attempt with minimal options
+                    os.environ['PYTHONIOENCODING'] = 'utf-8:ignore'
+                    tables = tabula.read_pdf(
+                        pdf_path,
+                        pages=pages,
+                        multiple_tables=True,
+                        stream=True,
+                        guess=True
+                    )
+                    print(f"✅ Final minimal attempt extracted {len(tables)} tables")
+                    
             except Exception as e:
-                print(f"❌ CP1252 encoding failed: {e}")
+                print(f"❌ Last resort method failed: {e}")
                 tables = []
         
-        # Method 4: Try stream method if encoding methods failed
-        if not tables:
-            try:
-                print("Attempting stream method...")
-                os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US'
-                tables = tabula.read_pdf(
-                    pdf_path,
-                    pages=pages,
-                    multiple_tables=True,
-                    stream=True,
-                    guess=False,
-                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
-                    pandas_options={'header': None}
-                )
-                print(f"✅ Stream method extracted {len(tables)} tables")
-            except Exception as e:
-                print(f"❌ Stream method failed: {e}")
-                tables = []
-        
-        # Method 5: Try stream with auto-detection
-        if not tables:
-            try:
-                print("Attempting stream method with auto-detection...")
-                tables = tabula.read_pdf(
-                    pdf_path,
-                    pages=pages,
-                    multiple_tables=True,
-                    stream=True,
-                    guess=True,
-                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
-                    pandas_options={'header': None}
-                )
-                print(f"✅ Stream with auto-detection extracted {len(tables)} tables")
-            except Exception as e:
-                print(f"❌ Stream with auto-detection failed: {e}")
-                tables = []
-                
-        # Method 6: Last resort - try without any encoding specification
-        if not tables:
-            try:
-                print("Attempting without encoding specification...")
-                os.environ['JAVA_TOOL_OPTIONS'] = '-Duser.language=en -Duser.country=US'
-                tables = tabula.read_pdf(
-                    pdf_path,
-                    pages=pages,
-                    multiple_tables=True,
-                    stream=True,
-                    guess=True,
-                    java_options="-Duser.language=en -Duser.country=US -Djava.awt.headless=true"
-                    # No pandas_options at all
-                )
-                print(f"✅ No encoding specification extracted {len(tables)} tables")
-            except Exception as e:
-                print(f"❌ No encoding specification failed: {e}")
-                tables = []
-        
-        # Restore original JAVA_TOOL_OPTIONS
+        # Restore original environment variables
         if original_java_options:
             os.environ['JAVA_TOOL_OPTIONS'] = original_java_options
         elif 'JAVA_TOOL_OPTIONS' in os.environ:
             del os.environ['JAVA_TOOL_OPTIONS']
+            
+        if original_lang:
+            os.environ['LANG'] = original_lang
+        elif 'LANG' in os.environ:
+            del os.environ['LANG']
+            
+        if original_lc_all:
+            os.environ['LC_ALL'] = original_lc_all
+        elif 'LC_ALL' in os.environ:
+            del os.environ['LC_ALL']
+            
+        if 'PYTHONIOENCODING' in os.environ:
+            del os.environ['PYTHONIOENCODING']
             
         # Report extraction results
         if tables:
@@ -209,13 +341,23 @@ def extract_tables_with_tabula(pdf_path, pages):
                     table[col] = table[col].str.replace(r'\s+', ' ', regex=True)  # Normalize whitespace
                     table[col] = table[col].str.strip()  # Remove leading/trailing whitespace
                 
+                # Filter out tables that don't look like BOMs
                 if not table.empty:
-                    cleaned_tables.append(table)
-                    print(f"Table {i+1}: {table.shape[0]} rows, {table.shape[1]} columns")
-                    # Show a sample of the cleaned data for debugging
-                    print(f"Sample cleaned data from Table {i+1}:")
-                    print(table.head(2).to_string())
-                    print("---")
+                    # Check if this looks like a BOM table
+                    is_bom_table = is_likely_bom_table(table)
+                    if is_bom_table:
+                        cleaned_tables.append(table)
+                        print(f"Table {i+1}: {table.shape[0]} rows, {table.shape[1]} columns - ✅ Looks like BOM")
+                        # Show a sample of the cleaned data for debugging
+                        print(f"Sample cleaned data from Table {i+1}:")
+                        print(table.head(2).to_string())
+                        print("---")
+                    else:
+                        print(f"Table {i+1}: {table.shape[0]} rows, {table.shape[1]} columns - ❌ Doesn't look like BOM, skipping")
+                        # Show sample of rejected table for debugging
+                        print(f"Sample rejected data from Table {i+1}:")
+                        print(table.head(2).to_string())
+                        print("---")
         
         tables = cleaned_tables
         
@@ -331,15 +473,28 @@ def clean_nel_columns(df):
         print("🔧 NEL DEBUG: Empty dataframe passed to clean_nel_columns")
         return df
 
+    # Look for the actual "BILL OF MATERIAL" header
+    bill_of_material_row = -1
+    for idx in range(min(20, len(df))):
+        row = df.iloc[idx]
+        row_text = ' '.join(row.fillna('').astype(str).str.upper())
+        if 'BILL OF MATERIAL' in row_text:
+            bill_of_material_row = idx
+            print(f"🔧 NEL DEBUG: Found 'BILL OF MATERIAL' at row {idx}")
+            break
+    
+    # If we found the BOM section, start looking for headers from there
+    start_search = max(0, bill_of_material_row)
+    
     # Define header keywords for NEL BOMs (common in schematics)
     header_keywords = [
         'ITEM', 'QTY', 'QUANTITY', 'PART', 'NUMBER', 'DESCRIPTION', 'DESC', 'REFERENCE', 'REF', 'DESIGNATOR',
-        'VALUE', 'PACKAGE', 'FOOTPRINT', 'MANUFACTURER', 'MFG', 'MPN', 'VENDOR', 'SUPPLIER'
+        'VALUE', 'PACKAGE', 'FOOTPRINT', 'MANUFACTURER', 'MFG', 'MPN', 'VENDOR', 'SUPPLIER', 'NOTES'
     ]
     
     best_score = 0
-    best_idx = 0
-    for idx in range(min(15, len(df))):  # Scan first 15 rows for best header (schematics can have more header info)
+    best_idx = start_search
+    for idx in range(start_search, min(start_search + 10, len(df))):  # Look within 10 rows of BOM section
         row = df.iloc[idx]
         non_empty_cells = row.dropna().astype(str).str.upper().str.strip()
         score = sum(any(kw in cell for kw in header_keywords) for cell in non_empty_cells)
@@ -347,7 +502,13 @@ def clean_nel_columns(df):
         if score > best_score:
             best_score = score
             best_idx = idx
+    
     print(f"🔧 NEL DEBUG: Selected header row index: {best_idx} (score: {best_score})")
+
+    # If we didn't find good headers, this might not be a BOM table
+    if best_score < 2:
+        print(f"🔧 NEL DEBUG: Low header score ({best_score}), this might not be a BOM table")
+        return df  # Return as-is, let the BOM filter handle it
 
     # Set the detected header row as columns
     new_columns = df.iloc[best_idx].fillna('').astype(str).str.strip()
@@ -360,13 +521,54 @@ def clean_nel_columns(df):
     print(f"🔧 NEL DEBUG: After header extraction - columns: {df.columns.tolist()}")
     print(f"🔧 NEL DEBUG: After header extraction - shape: {df.shape}")
 
+    # Remove columns that don't have a proper header (NEL-specific)
+    original_columns = df.columns.tolist()
+    columns_to_keep = []
+    columns_to_remove = []
+    
+    for col in df.columns:
+        col_str = str(col).strip()
+        # Keep columns that have meaningful headers (not empty, not generic Column_X, not just whitespace)
+        if col_str and col_str != 'nan' and not col_str.startswith('Column_') and col_str.strip() != '':
+            columns_to_keep.append(col)
+        else:
+            columns_to_remove.append(col)
+    
+    if columns_to_remove:
+        print(f"🔧 NEL DEBUG: Removing columns without proper headers: {columns_to_remove}")
+        df = df[columns_to_keep]
+        print(f"🔧 NEL DEBUG: After removing headerless columns - shape: {df.shape}")
+        print(f"🔧 NEL DEBUG: After removing headerless columns - columns: {df.columns.tolist()}")
+    else:
+        print("🔧 NEL DEBUG: No columns without headers found to remove")
+
     # Remove any duplicate header rows
     df = df[~df.apply(lambda row: row.astype(str).str.strip().tolist() == df.columns.astype(str).tolist(), axis=1)]
+    df = df.reset_index(drop=True)
+    
+    # Remove rows that look like drawing instructions or notes
+    instruction_keywords = [
+        'CUT BACK', 'REMOVE', 'SHRINK TUBING', 'DRAWING NUMBER', 'HARNESS', 'PRINTED DRAWING',
+        'REFERENCE ONLY', 'DOCUMENT CONTROL', 'LATEST REVISION', 'PROPERTY OF', 'DELIVERED ON',
+        'EXPRESS CONDITION', 'NOT TO BE DISCLOSED', 'MARK PER', 'CONTINUITY TEST', 'LOCATE AND ATTACH'
+    ]
+    
+    # Filter out instruction rows
+    original_length = len(df)
+    for keyword in instruction_keywords:
+        # Check each row for instruction keywords
+        mask = ~df.apply(lambda row: any(keyword in str(cell).upper() for cell in row), axis=1)
+        df = df[mask]
+    
+    if len(df) < original_length:
+        print(f"🔧 NEL DEBUG: Removed {original_length - len(df)} instruction/note rows")
+    
     df = df.reset_index(drop=True)
 
     # Handle common NEL column standardization
     column_mapping = {
         'ITEM': 'Item',
+        'ITEM NO': 'Item',
         'QTY': 'Quantity',
         'QUANTITY': 'Quantity',
         'PART NUMBER': 'Part Number',
@@ -382,8 +584,11 @@ def clean_nel_columns(df):
         'MANUFACTURER': 'Manufacturer',
         'MFG': 'Manufacturer',
         'MPN': 'MPN',
+        'MFG P/N': 'MPN',
         'VENDOR': 'Vendor',
-        'SUPPLIER': 'Supplier'
+        'SUPPLIER': 'Supplier',
+        'PROTON P/N': 'Proton P/N',
+        'NOTES': 'Notes'
     }
     
     # Apply column mapping
@@ -393,6 +598,43 @@ def clean_nel_columns(df):
                 df.rename(columns={col: new_col}, inplace=True)
                 print(f"🔧 NEL DEBUG: Renamed '{col}' to '{new_col}'")
                 break
+
+    # Clean Quantity column - remove any text besides numbers (NEL-specific)
+    quantity_cols = [col for col in df.columns if 'quantity' in str(col).lower() or col == 'Quantity']
+    if quantity_cols:
+        for qty_col in quantity_cols:
+            print(f"🔧 NEL DEBUG: Cleaning quantity column '{qty_col}'")
+            original_values = df[qty_col].copy()
+            
+            # Function to extract only numbers from text
+            def extract_numbers(value):
+                if pd.isna(value) or value == '':
+                    return ''
+                # Convert to string and extract only digits and decimal points
+                value_str = str(value).strip()
+                # Use regex to find numbers (including decimals)
+                numbers = re.findall(r'\d+\.?\d*', value_str)
+                if numbers:
+                    # Take the first number found
+                    return numbers[0]
+                else:
+                    return ''
+            
+            # Apply the cleaning function
+            df[qty_col] = df[qty_col].apply(extract_numbers)
+            
+            # Log changes made
+            changes_made = sum(1 for orig, new in zip(original_values, df[qty_col]) 
+                             if str(orig).strip() != str(new).strip())
+            if changes_made > 0:
+                print(f"🔧 NEL DEBUG: Cleaned {changes_made} quantity values in '{qty_col}'")
+                # Show a few examples of changes
+                sample_changes = [(orig, new) for orig, new in zip(original_values, df[qty_col]) 
+                                if str(orig).strip() != str(new).strip()][:3]
+                for orig, new in sample_changes:
+                    print(f"🔧 NEL DEBUG: '{orig}' -> '{new}'")
+            else:
+                print(f"🔧 NEL DEBUG: No changes needed for quantity column '{qty_col}'")
 
     print(f"🔧 NEL DEBUG: Final table shape: {df.shape}")
     print(f"🔧 NEL DEBUG: Final columns: {df.columns.tolist()}")
@@ -725,43 +967,120 @@ def show_table_selector(tables):
 
 def review_and_edit_dataframe(df):
     """Review and edit dataframe with error handling for GUI issues."""
+    print(f"📝 REVIEW DEBUG: Starting review window for dataframe with shape {df.shape}")
+    
     try:
+        # Create the window with better configuration
         root = tk.Tk()
         root.title("Review and Edit Merged BoM Table")
-        root.withdraw()  # Hide initially to prevent flashing
+        root.geometry("1200x800")
         
-        frame = tk.Frame(root)
-        frame.pack(fill='both', expand=True)
+        # Force the window to be on top and get focus
+        root.lift()
+        root.attributes('-topmost', True)
+        root.after(100, lambda: root.attributes('-topmost', False))
+        
+        # Center the window
+        root.update_idletasks()
+        x = (root.winfo_screenwidth() // 2) - (1200 // 2)
+        y = (root.winfo_screenheight() // 2) - (800 // 2)
+        root.geometry(f"1200x800+{x}+{y}")
+        
+        print(f"📝 REVIEW DEBUG: Window created and positioned")
+        
+        # Main frame
+        main_frame = tk.Frame(root)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Title
+        title_label = tk.Label(main_frame, text="Review and Edit Merged BoM Table", 
+                              font=("Arial", 14, "bold"))
+        title_label.pack(pady=(0, 10))
+        
+        # Instructions
+        instructions = tk.Label(main_frame, 
+                               text="Review the merged table below. You can edit cell values directly in the table.\nClick 'Continue' when you're satisfied with the data.",
+                               font=("Arial", 10))
+        instructions.pack(pady=(0, 10))
+        
+        # Table frame
+        table_frame = tk.Frame(main_frame)
+        table_frame.pack(fill='both', expand=True)
 
         # Try to create the pandastable with error handling
         try:
-            pt = Table(frame, dataframe=df, showtoolbar=True, showstatusbar=True)
+            print(f"📝 REVIEW DEBUG: Creating pandastable...")
+            pt = Table(table_frame, dataframe=df, showtoolbar=True, showstatusbar=True)
             pt.show()
+            print(f"📝 REVIEW DEBUG: Pandastable created successfully")
             
             def on_continue():
                 nonlocal df
                 try:
+                    print(f"📝 REVIEW DEBUG: User clicked Continue - extracting data...")
                     df = pt.model.df.copy()
+                    print(f"📝 REVIEW DEBUG: Data extracted successfully - shape: {df.shape}")
                 except Exception as e:
-                    print(f"Warning: Could not get edited data: {e}")
-                    print("Using original data...")
+                    print(f"📝 REVIEW DEBUG: Could not get edited data: {e}")
+                    print("📝 REVIEW DEBUG: Using original data...")
                 root.destroy()
 
-            tk.Button(root, text="Continue", command=on_continue).pack(pady=10)
+            def on_cancel():
+                print(f"📝 REVIEW DEBUG: User clicked Cancel - using original data")
+                root.destroy()
+
+            # Button frame
+            button_frame = tk.Frame(main_frame)
+            button_frame.pack(fill='x', pady=(10, 0))
             
-            # Show the window after everything is set up
-            root.deiconify()
-            root.mainloop()
+            tk.Button(button_frame, text="Continue with Changes", command=on_continue,
+                     bg='lightgreen', font=("Arial", 12), padx=20, pady=5).pack(side='left', padx=(0, 10))
+            tk.Button(button_frame, text="Cancel (Use Original)", command=on_cancel,
+                     bg='lightcoral', font=("Arial", 12), padx=20, pady=5).pack(side='left')
             
         except Exception as table_error:
-            print(f"Error creating table editor: {table_error}")
-            print("Skipping manual review - using data as-is...")
-            root.destroy()
+            print(f"📝 REVIEW DEBUG: Pandastable failed: {table_error}")
+            print("📝 REVIEW DEBUG: Using fallback text display...")
             
+            # Fallback to simple text display
+            text_widget = tk.Text(table_frame, wrap=tk.NONE, font=("Courier", 10))
+            h_scrollbar = tk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=text_widget.xview)
+            v_scrollbar = tk.Scrollbar(table_frame, orient=tk.VERTICAL, command=text_widget.yview)
+            text_widget.configure(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
+            
+            # Display table data
+            text_widget.insert(tk.END, df.to_string(index=False))
+            text_widget.config(state=tk.DISABLED)
+            
+            # Grid layout
+            text_widget.grid(row=0, column=0, sticky='nsew')
+            h_scrollbar.grid(row=1, column=0, sticky='ew')
+            v_scrollbar.grid(row=0, column=1, sticky='ns')
+            table_frame.grid_rowconfigure(0, weight=1)
+            table_frame.grid_columnconfigure(0, weight=1)
+            
+            # Simple continue button for fallback
+            def on_simple_continue():
+                print(f"📝 REVIEW DEBUG: User continued with read-only review")
+                root.destroy()
+            
+            button_frame = tk.Frame(main_frame)
+            button_frame.pack(fill='x', pady=(10, 0))
+            tk.Button(button_frame, text="Continue", command=on_simple_continue,
+                     bg='lightblue', font=("Arial", 12), padx=20, pady=5).pack()
+        
+        # Force focus and show window
+        print(f"📝 REVIEW DEBUG: Showing window and starting mainloop...")
+        root.focus_force()
+        root.grab_set()  # Make window modal
+        root.mainloop()
+        print(f"📝 REVIEW DEBUG: Mainloop completed")
+        
     except Exception as e:
-        print(f"Error in review window: {e}")
-        print("Skipping manual review - using data as-is...")
+        print(f"📝 REVIEW DEBUG: Error in review window: {e}")
+        print(f"📝 REVIEW DEBUG: Skipping manual review - using data as-is...")
     
+    print(f"📝 REVIEW DEBUG: Review completed - returning dataframe with shape: {df.shape}")
     return df
 
 def save_tables_to_excel(tables, output_path):
@@ -801,6 +1120,15 @@ def merge_tables_and_export(tables, output_path, sheet_name="Combined_BoM", comp
             merged_df = clean_nel_columns(merged_df)
         else:
             print(f"📊 MERGE DEBUG: No company-specific formatting applied (company='{company}')")
+            
+            # Try to auto-detect company from the data
+            merged_text = ' '.join(merged_df.fillna('').astype(str).values.flatten()).upper()
+            if 'NEL HYDROGEN' in merged_text or 'PROTON ENERGY' in merged_text:
+                print("📊 MERGE DEBUG: Auto-detected NEL company from data, applying NEL formatting...")
+                merged_df = clean_nel_columns(merged_df)
+            elif 'FARRELL' in merged_text:
+                print("📊 MERGE DEBUG: Auto-detected Farrell company from data, applying Farrell formatting...")
+                merged_df = clean_farrell_columns(merged_df)
 
         print(f"\n📊 MERGE DEBUG: ===== AFTER COMPANY PROCESSING =====")
         print(f"📊 MERGE DEBUG: Table shape: {merged_df.shape}")
@@ -821,11 +1149,21 @@ def merge_tables_and_export(tables, output_path, sheet_name="Combined_BoM", comp
         
         print(f"📊 MERGE DEBUG: Final cleaned table shape: {merged_df.shape}")
 
-        print("Opening manual review window...")
-        merged_df = review_and_edit_dataframe(merged_df)
+        # Check if we should show the review window
+        # If called from GUI thread, we'll skip the review here and handle it in the GUI
+        skip_review = os.environ.get("BOM_SKIP_REVIEW", "false").lower() == "true"
+        
+        if not skip_review:
+            print("Opening manual review window...")
+            merged_df = review_and_edit_dataframe(merged_df)
+        else:
+            print("Skipping manual review (will be handled by GUI)...")
 
         merged_df.to_excel(output_path, index=False, sheet_name=sheet_name)
         print(f"✅ Final cleaned and reviewed table saved to: {output_path}")
+        
+        # Return the dataframe for GUI processing
+        return merged_df
 
     except Exception as e:
         print(f"❌ Failed to merge and export tables: {e}")
@@ -894,6 +1232,8 @@ def main():
         
         # Show error in GUI if available
         try:
+            import matplotlib
+            matplotlib.use('Agg')  # Use non-interactive backend to avoid GUI issues
             messagebox.showerror("No Tables Extracted", error_msg)
         except:
             pass  # GUI not available, error already printed
