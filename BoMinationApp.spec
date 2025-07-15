@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
-datas = [('C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\src\\chromedriver.exe', '.'), ('C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\Files\\OCTF-1539-COST SHEET.xlsx', 'Files'), ('C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\src', 'src')]
+datas = [('C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\src\\chromedriver.exe', '.'), ('C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\Files\\OCTF-1539-COST SHEET.xlsx', 'Files'), ('C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\src', 'src'), ('C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\assets', 'assets')]
 hiddenimports = ['ttkbootstrap', 'selenium', 'pandas', 'numpy', 'matplotlib', 'openpyxl', 'xlrd', 'tabula', 'pandastable', 'PIL', 'tkinter', 'jpype1', 'jpype1._jvmfinder', 'packaging', 'packaging.version', 'packaging.specifiers', 'packaging.requirements']
 datas += collect_data_files('ttkbootstrap')
 datas += collect_data_files('tabula')
@@ -47,4 +47,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['C:\\Users\\Luke Malkasian\\Documents\\OMNI\\BoMination\\assets\\BoMination_black.ico'],
 )

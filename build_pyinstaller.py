@@ -61,9 +61,19 @@ def build_app():
     files_dir = current_dir / "Files"
     cost_sheet_path = str(files_dir / "OCTF-1539-COST SHEET.xlsx")
     
+    # Assets directory path (contains icon)
+    assets_dir = current_dir / "assets"
+    icon_path = str(assets_dir / "BoMination_black.ico")
+    
     # Verify critical files exist
     critical_files = [main_script, chromedriver_path, cost_sheet_path]
     missing_files = [f for f in critical_files if not Path(f).exists()]
+    
+    # Check if icon exists (optional)
+    icon_exists = Path(icon_path).exists()
+    if not icon_exists:
+        print(f"⚠️ Icon file not found: {icon_path}")
+        print("   Place your icon as 'bomination_icon.ico' in the 'assets' folder")
     
     if missing_files:
         print(f"❌ Missing critical files:")
@@ -92,6 +102,7 @@ def build_app():
         f'--add-data={chromedriver_path};.',  # Include chromedriver
         f'--add-data={cost_sheet_path};Files',  # Include cost sheet template
         f'--add-data={src_dir};src',  # Include all source files
+        f'--add-data={assets_dir};assets',  # Include assets (icon)
         '--hidden-import=ttkbootstrap',
         '--hidden-import=selenium',
         '--hidden-import=pandas',
@@ -124,9 +135,14 @@ def build_app():
         '--exclude-module=numpy.tests',
         '--exclude-module=pandas.tests',
         '--exclude-module=PIL.tests',
-        # Add icon if available
-        # '--icon=icon.ico',  # Uncomment if you have an icon file
     ]
+    
+    # Add icon if available
+    if icon_exists:
+        args.append(f'--icon={icon_path}')
+        print(f"✅ Icon will be included: {icon_path}")
+    else:
+        print("⚠️ Building without icon")
     
     print("\n🚀 Starting PyInstaller build...")
     print(f"📄 Main script: {main_script}")
