@@ -160,10 +160,10 @@ def upload_file_to_bomtool(driver, file_path):
         # ⏳ Wait for pricing data to load dynamically based on number of parts
         # Count the number of parts in the input file to determine wait time
         try:
-            df = pd.read_excel(file_path)
+            df = pd.read_excel(file_path, keep_default_na=False, na_values=[''])
             part_count = len(df)
             # Wait 1.2 seconds per part, with minimum 5 seconds and maximum 180 seconds
-            wait_time = max(5, min(180, int(part_count * 1.2)))
+            wait_time = max(5, min(180, int(part_count * 1.4)))
             print(f"⏳ Found {part_count} parts in BOM - waiting {wait_time} seconds for pricing data to load...")
             time.sleep(wait_time)
         except Exception as e:

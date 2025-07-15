@@ -324,7 +324,8 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
         if review_callback:
             print("Loading merged data for GUI review...")
             import pandas as pd
-            merged_df = pd.read_excel(merged_path)
+            # Read Excel file with keep_default_na=False to prevent "N/A" from being converted to NaN
+            merged_df = pd.read_excel(merged_path, keep_default_na=False, na_values=[''])
             
             # Call the review callback with the merged data
             print("Calling GUI review callback...")
@@ -333,8 +334,11 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
             # Save the reviewed data back to the file
             if reviewed_df is not None:
                 print("Saving reviewed data...")
+                # Apply final "N/A" filling before saving to ensure consistency
+                reviewed_df = reviewed_df.fillna('N/A')
+                reviewed_df = reviewed_df.replace(['', 'nan', 'None', 'NaN'], 'N/A')
                 reviewed_df.to_excel(merged_path, index=False)
-                print("✓ Reviewed data saved")
+                print("✓ Reviewed data saved with N/A filling")
             else:
                 print("No changes made during review")
         

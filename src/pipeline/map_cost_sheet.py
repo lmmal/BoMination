@@ -44,8 +44,8 @@ def get_merged_file():
         print("Invalid merged file path.")
 
 def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH):
-    df_oem = pd.read_excel(oem_path)
-    df_merged = pd.read_excel(merged_path)
+    df_oem = pd.read_excel(oem_path, keep_default_na=False, na_values=[''])
+    df_merged = pd.read_excel(merged_path, keep_default_na=False, na_values=[''])
 
     # Get the user's selected company from environment variable
     user_company = os.environ.get("BOM_COMPANY", "").lower()
@@ -72,6 +72,40 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
         print("📊 Skipping PROTON P/N mapping (not NEL format)")
         df_oem["PROTON P/N"] = ""
 
+    # Pull additional columns from merged file for Primetals format
+    if user_company == "primetals":
+        # Pull MPN (part number) from merged file
+        if "MPN" in df_merged.columns:
+            df_oem["MPN"] = df_merged["MPN"]
+            print("✅ Added MPN column from merged file (Primetals format)")
+        else:
+            print("⚠️ MPN column not found in merged file. Skipping part number.")
+            df_oem["MPN"] = ""
+        
+        # Pull QTY (quantity) from merged file
+        if "QTY" in df_merged.columns:
+            df_oem["QTY"] = df_merged["QTY"]
+            print("✅ Added QTY column from merged file (Primetals format)")
+        else:
+            print("⚠️ QTY column not found in merged file. Skipping quantity.")
+            df_oem["QTY"] = ""
+        
+        # Pull MFG (manufacturer) from merged file
+        if "MFG" in df_merged.columns:
+            df_oem["MFG"] = df_merged["MFG"]
+            print("✅ Added MFG column from merged file (Primetals format)")
+        else:
+            print("⚠️ MFG column not found in merged file. Skipping manufacturer.")
+            df_oem["MFG"] = ""
+        
+        # Pull ITEM from merged file
+        if "ITEM" in df_merged.columns:
+            df_oem["ITEM"] = df_merged["ITEM"]
+            print("✅ Added ITEM column from merged file (Primetals format)")
+        else:
+            print("⚠️ ITEM column not found in merged file. Skipping item number.")
+            df_oem["ITEM"] = ""
+
     # Detect company format based on column names
     oem_columns = df_oem.columns.tolist()
     merged_columns = df_merged.columns.tolist()
@@ -95,6 +129,18 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
             "PROTON P/N": "CUST PART #",  # Pull from merged file for NEL
             "DESCRIPTION": "DESCRIPTION"
         }
+    elif user_company == "primetals":
+        print("📊 Using Primetals format - based on user selection")
+        column_mapping = {
+            "ITEM": "ITEM",
+            "MFG": "MFR",
+            "MPN": "COMMERCIAL PART#",
+            "QTY": "UNIT QTY",
+            "Unit Price in USD": "COST EACH",
+            "Lead Time on Additional Stock in Weeks": "LEAD TIME (WEEKS)",
+            "Notes": "SUPPLIER / NOTES",
+            "DESCRIPTION": "DESCRIPTION"
+        }
     else:
         print("📊 Using Farrell format - based on user selection")
         # Map the actual column names from the Farrell file
@@ -114,6 +160,10 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
     df_renamed = df_oem.rename(columns={k: v for k, v in column_mapping.items() if k in df_oem.columns})
     mapped_columns = list(column_mapping.values())
     df_out = df_renamed[[col for col in mapped_columns if col in df_renamed.columns]].copy()
+
+    # Fill any remaining NaN values with "N/A" to ensure consistency
+    df_out = df_out.fillna("N/A")
+    df_out = df_out.replace("", "N/A")
 
     # Add ITEM numbers (sequential numbering)
     if "ITEM" not in df_out.columns:

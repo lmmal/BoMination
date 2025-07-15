@@ -342,11 +342,493 @@ def clean_generic_columns(df):
     return df
 
 
+def clean_primetals_columns(df):
+    """Clean Primetals-specific table formatting, handling dual-column BOM structures."""
+    print(f"\n🔧 PRIMETALS DEBUG: Original table shape: {df.shape}")
+    print(f"🔧 PRIMETALS DEBUG: Current column names: {df.columns.tolist()}")
+    print(f"🔧 PRIMETALS DEBUG: First few rows:\n{df.head(8)}")
+    
+    if df.empty:
+        print("🔧 PRIMETALS DEBUG: Empty dataframe passed to clean_primetals_columns")
+        return df
+
+    # Check if the table already has proper BOM headers
+    current_columns = [str(col).upper() for col in df.columns]
+    bom_headers = ['ITEM', 'MFG', 'DESCRIPTION', 'QTY']
+    # Check for either MPN or MFGPART as the part number column
+    part_number_header = 'MPN' in current_columns or 'MFGPART' in current_columns
+    
+    # If we already have proper BOM headers, don't try to extract new ones
+    if all(header in current_columns for header in bom_headers) and part_number_header:
+        print("🔧 PRIMETALS DEBUG: Table already has proper BOM headers, skipping header extraction")
+        
+        # Just clean up the data and remove any unwanted rows
+        original_length = len(df)
+        
+        # Remove rows that contain company/confidential information
+        confidential_keywords = [
+            'PRIMETALS TECHNOLOGIES', 'CONFIDENTIAL', 'PROPRIETARY', 'INTERNAL USE ONLY',
+            'NOT FOR DISTRIBUTION', 'COMPANY CONFIDENTIAL'
+        ]
+        
+        # Filter out confidential rows
+        for keyword in confidential_keywords:
+            # Check each row for confidential keywords
+            mask = ~df.apply(lambda row: any(keyword in str(cell).upper() for cell in row), axis=1)
+            df = df[mask]
+        
+        if len(df) < original_length:
+            print(f"🔧 PRIMETALS DEBUG: Removed {original_length - len(df)} confidential/header rows")
+        
+        df = df.reset_index(drop=True)
+        
+        # Rename MFGPART to MPN for OEMSecrets compatibility
+        if 'MFGPART' in df.columns:
+            df.rename(columns={'MFGPART': 'MPN'}, inplace=True)
+            print("🔧 PRIMETALS DEBUG: Renamed 'MFGPART' to 'MPN' for OEMSecrets compatibility")
+        
+        # Clean data for OEMSecrets compatibility
+        if len(df) > 0:
+            print("🔧 PRIMETALS DEBUG: Cleaning data for OEMSecrets compatibility...")
+            
+            # Clean quantity fields - remove non-numeric characters
+            quantity_cols = [col for col in df.columns if any(qty_name in str(col).upper() for qty_name in ['QTY', 'QUANTITY', 'QUAN'])]
+            for col in quantity_cols:
+                if col in df.columns:
+                    original_count = len(df[col].dropna())
+                    # Extract only numeric characters and decimal points
+                    df[col] = df[col].astype(str).str.replace(r'[^\d.]', '', regex=True)
+                    # Remove empty strings and convert to proper format
+                    df[col] = df[col].replace('', '1')  # Default to 1 if empty
+                    # Handle multiple decimal points - keep only the first one
+                    df[col] = df[col].str.replace(r'\.(?=.*\.)', '', regex=True)
+                    # Convert to numeric, invalid entries become NaN
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    # Fill NaN with 1 (default quantity)
+                    df[col] = df[col].fillna(1)
+                    # Convert to integer if whole number, otherwise keep as float
+                    df[col] = df[col].apply(lambda x: int(x) if x == int(x) else x)
+                    cleaned_count = len(df[col].dropna())
+                    print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+            
+            # Clean part number fields - remove excessive whitespace and special characters that might cause issues
+            part_cols = [col for col in df.columns if any(part_name in str(col).upper() for part_name in ['PART', 'MPN', 'MFGPART'])]
+            for col in part_cols:
+                if col in df.columns:
+                    original_count = len(df[col].dropna())
+                    # Remove excessive whitespace
+                    df[col] = df[col].astype(str).str.strip()
+                    # Replace multiple spaces with single space
+                    df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+                    # Remove leading/trailing special characters that might cause issues
+                    df[col] = df[col].str.replace(r'^[^\w\d]+|[^\w\d]+$', '', regex=True)
+                    # Replace empty strings, 'nan', and 'None' with "N/A" for OEMSecrets compatibility
+                    df[col] = df[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                    cleaned_count = len(df[col][df[col] != 'N/A'])
+                    print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+            
+            # Clean manufacturer fields - standardize formatting
+            mfg_cols = [col for col in df.columns if any(mfg_name in str(col).upper() for mfg_name in ['MFG', 'MANUFACTURER', 'MANUF'])]
+            for col in mfg_cols:
+                if col in df.columns:
+                    original_count = len(df[col].dropna())
+                    # Remove excessive whitespace
+                    df[col] = df[col].astype(str).str.strip()
+                    # Replace multiple spaces with single space
+                    df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+                    # Standardize common manufacturer names
+                    df[col] = df[col].str.replace(r'(?i)^siemens.*', 'SIEMENS', regex=True)
+                    df[col] = df[col].str.replace(r'(?i)^abb.*', 'ABB', regex=True)
+                    df[col] = df[col].str.replace(r'(?i)^schneider.*', 'SCHNEIDER', regex=True)
+                    df[col] = df[col].str.replace(r'(?i)^eaton.*', 'EATON', regex=True)
+                    # Replace empty strings, 'nan', and 'None' with "N/A" for OEMSecrets compatibility
+                    df[col] = df[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                    cleaned_count = len(df[col][df[col] != 'N/A'])
+                    print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+            
+            # Clean description fields - remove excessive whitespace and standardize
+            desc_cols = [col for col in df.columns if any(desc_name in str(col).upper() for desc_name in ['DESC', 'DESCRIPTION'])]
+            for col in desc_cols:
+                if col in df.columns:
+                    original_count = len(df[col].dropna())
+                    # Remove excessive whitespace
+                    df[col] = df[col].astype(str).str.strip()
+                    # Replace multiple spaces with single space
+                    df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+                    # Replace empty strings, 'nan', and 'None' with "N/A" for OEMSecrets compatibility
+                    df[col] = df[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                    cleaned_count = len(df[col][df[col] != 'N/A'])
+                    print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+            
+            # Fill all remaining empty cells with "N/A" to ensure OEMSecrets processes all rows
+            print("🔧 PRIMETALS DEBUG: Filling any remaining empty cells with 'N/A' for OEMSecrets compatibility...")
+            df = df.fillna('N/A')
+            df = df.replace(['', 'nan', 'None', 'NaN'], 'N/A')
+            
+            # Set QTY to 0 for rows where MFG, MPN, and DESCRIPTION are all "N/A"
+            # This prevents OEMSecrets from adding cost for non-existent parts
+            if 'MFG' in df.columns and 'MPN' in df.columns and 'DESCRIPTION' in df.columns and 'QTY' in df.columns:
+                na_mask = (df['MFG'] == 'N/A') & (df['MPN'] == 'N/A') & (df['DESCRIPTION'] == 'N/A')
+                rows_to_zero = na_mask.sum()
+                if rows_to_zero > 0:
+                    df.loc[na_mask, 'QTY'] = 0
+                    print(f"🔧 PRIMETALS DEBUG: Set QTY to 0 for {rows_to_zero} rows where MFG, MPN, and DESCRIPTION are all 'N/A'")
+            
+            # Don't remove rows with missing critical data - preserve exact PDF structure
+            print("🔧 PRIMETALS DEBUG: Preserving all rows to match PDF structure exactly")
+            
+            df = df.reset_index(drop=True)
+            print("🔧 PRIMETALS DEBUG: Data cleaning completed for OEMSecrets compatibility")
+        
+        print(f"🔧 PRIMETALS DEBUG: Final table shape: {df.shape}")
+        print(f"🔧 PRIMETALS DEBUG: Final columns: {df.columns.tolist()}")
+        if len(df) > 0:
+            print(f"🔧 PRIMETALS DEBUG: Sample of final data:\n{df.head(2)}")
+        print("🔧 PRIMETALS DEBUG: ===== END PRIMETALS PROCESSING =====\n")
+        
+        return df
+
+    # Check if this looks like a dual-column BOM
+    if df.shape[1] >= 8:
+        # Look for header patterns to identify column groups
+        header_row = df.iloc[0] if len(df) > 0 else pd.Series()
+        header_str = ' '.join(str(cell) for cell in header_row)
+        
+        print(f"🔧 PRIMETALS DEBUG: Header row: {header_str}")
+        
+        # Find repeated patterns indicating dual columns
+        if 'ITEM' in header_str and header_str.count('ITEM') >= 2:
+            print("🔧 PRIMETALS DEBUG: Detected dual-column BOM table - splitting into individual parts")
+            
+            # Find the column indices for each side
+            left_cols = []
+            right_cols = []            # For dual-column BOM, we expect: ITEM, MFG, MPN, DESCRIPTION, QTY on each side
+            header_list = [str(cell).strip().upper() for cell in header_row]
+            
+            # Find all ITEM columns (there should be 2)
+            item_positions = [i for i, h in enumerate(header_list) if 'ITEM' in h]
+            print(f"🔧 PRIMETALS DEBUG: ITEM positions found: {item_positions}")
+            
+            if len(item_positions) >= 2:
+                # Use the ITEM positions to determine left and right column groups
+                left_start = item_positions[0]
+                right_start = item_positions[1]
+                
+                # Standard BOM columns: ITEM, MFG, MPN, DESCRIPTION, QTY
+                left_cols = list(range(left_start, min(left_start + 5, len(header_list))))
+                right_cols = list(range(right_start, min(right_start + 5, len(header_list))))
+                
+                # Remove any columns that don't exist
+                left_cols = [i for i in left_cols if i < len(header_list)]
+                right_cols = [i for i in right_cols if i < len(header_list)]
+                
+                print(f"🔧 PRIMETALS DEBUG: Left columns: {left_cols}")
+                print(f"🔧 PRIMETALS DEBUG: Right columns: {right_cols}")
+                
+                if len(left_cols) >= 4 and len(right_cols) >= 4:
+                    # Extract data from both sides
+                    left_data = df.iloc[:, left_cols].copy()
+                    right_data = df.iloc[:, right_cols].copy()
+                    
+                    # Standardize column names
+                    standard_cols = ['ITEM', 'MFG', 'MPN', 'DESCRIPTION', 'QTY']
+                    left_data.columns = standard_cols[:len(left_data.columns)]
+                    right_data.columns = standard_cols[:len(right_data.columns)]
+                    
+                    # Remove header rows and empty rows
+                    left_data = left_data[1:].reset_index(drop=True)  # Skip header
+                    right_data = right_data[1:].reset_index(drop=True)  # Skip header
+                    
+                    # Filter out empty rows
+                    left_data = left_data[left_data['ITEM'].notna() & (left_data['ITEM'].astype(str).str.strip() != '')].copy()
+                    right_data = right_data[right_data['ITEM'].notna() & (right_data['ITEM'].astype(str).str.strip() != '')].copy()
+                    
+                    print(f"🔧 PRIMETALS DEBUG: Left side: {len(left_data)} parts")
+                    print(f"🔧 PRIMETALS DEBUG: Right side: {len(right_data)} parts")
+                    
+                    # Combine both sides
+                    combined_data = pd.concat([left_data, right_data], ignore_index=True)
+                    
+                    # Clean up the data
+                    combined_data = combined_data.dropna(subset=['ITEM'])
+                    combined_data = combined_data[combined_data['ITEM'].astype(str).str.strip() != '']
+                    
+                    print(f"🔧 PRIMETALS DEBUG: Combined: {len(combined_data)} parts")
+                    
+                    # Clean data for OEMSecrets compatibility
+                    if len(combined_data) > 0:
+                        print("🔧 PRIMETALS DEBUG: Cleaning dual-column data for OEMSecrets compatibility...")
+                        
+                        # Clean quantity fields - remove non-numeric characters
+                        quantity_cols = [col for col in combined_data.columns if any(qty_name in str(col).upper() for qty_name in ['QTY', 'QUANTITY', 'QUAN'])]
+                        for col in quantity_cols:
+                            if col in combined_data.columns:
+                                original_count = len(combined_data[col].dropna())
+                                # Extract only numeric characters and decimal points
+                                combined_data[col] = combined_data[col].astype(str).str.replace(r'[^\d.]', '', regex=True)
+                                # Remove empty strings and convert to proper format
+                                combined_data[col] = combined_data[col].replace('', '1')  # Default to 1 if empty
+                                # Handle multiple decimal points - keep only the first one
+                                combined_data[col] = combined_data[col].str.replace(r'\.(?=.*\.)', '', regex=True)
+                                # Convert to numeric, invalid entries become NaN
+                                combined_data[col] = pd.to_numeric(combined_data[col], errors='coerce')
+                                # Fill NaN with 1 (default quantity)
+                                combined_data[col] = combined_data[col].fillna(1)
+                                # Convert to integer if whole number, otherwise keep as float
+                                combined_data[col] = combined_data[col].apply(lambda x: int(x) if x == int(x) else x)
+                                cleaned_count = len(combined_data[col].dropna())
+                                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+                        
+                        # Clean part number fields
+                        part_cols = [col for col in combined_data.columns if any(part_name in str(col).upper() for part_name in ['PART', 'MPN', 'MFGPART'])]
+                        for col in part_cols:
+                            if col in combined_data.columns:
+                                original_count = len(combined_data[col].dropna())
+                                combined_data[col] = combined_data[col].astype(str).str.strip()
+                                combined_data[col] = combined_data[col].str.replace(r'\s+', ' ', regex=True)
+                                combined_data[col] = combined_data[col].str.replace(r'^[^\w\d]+|[^\w\d]+$', '', regex=True)
+                                combined_data[col] = combined_data[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                                cleaned_count = len(combined_data[col][combined_data[col] != 'N/A'])
+                                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+                        
+                        # Clean manufacturer fields
+                        mfg_cols = [col for col in combined_data.columns if any(mfg_name in str(col).upper() for mfg_name in ['MFG', 'MANUFACTURER', 'MANUF'])]
+                        for col in mfg_cols:
+                            if col in combined_data.columns:
+                                original_count = len(combined_data[col].dropna())
+                                combined_data[col] = combined_data[col].astype(str).str.strip()
+                                combined_data[col] = combined_data[col].str.replace(r'\s+', ' ', regex=True)
+                                combined_data[col] = combined_data[col].str.replace(r'(?i)^siemens.*', 'SIEMENS', regex=True)
+                                combined_data[col] = combined_data[col].str.replace(r'(?i)^abb.*', 'ABB', regex=True)
+                                combined_data[col] = combined_data[col].str.replace(r'(?i)^schneider.*', 'SCHNEIDER', regex=True)
+                                combined_data[col] = combined_data[col].str.replace(r'(?i)^eaton.*', 'EATON', regex=True)
+                                combined_data[col] = combined_data[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                                cleaned_count = len(combined_data[col][combined_data[col] != 'N/A'])
+                                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+                        
+                        # Clean description fields
+                        desc_cols = [col for col in combined_data.columns if any(desc_name in str(col).upper() for desc_name in ['DESC', 'DESCRIPTION'])]
+                        for col in desc_cols:
+                            if col in combined_data.columns:
+                                original_count = len(combined_data[col].dropna())
+                                combined_data[col] = combined_data[col].astype(str).str.strip()
+                                combined_data[col] = combined_data[col].str.replace(r'\s+', ' ', regex=True)
+                                combined_data[col] = combined_data[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                                cleaned_count = len(combined_data[col][combined_data[col] != 'N/A'])
+                                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+                        
+                        # Fill all remaining empty cells with "N/A" to ensure OEMSecrets processes all rows
+                        print("🔧 PRIMETALS DEBUG: Filling any remaining empty cells with 'N/A' for OEMSecrets compatibility...")
+                        combined_data = combined_data.fillna('N/A')
+                        combined_data = combined_data.replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                        
+                        # Set QTY to 0 for rows where MFG, MPN, and DESCRIPTION are all "N/A"
+                        # This prevents OEMSecrets from adding cost for non-existent parts
+                        if 'MFG' in combined_data.columns and 'MPN' in combined_data.columns and 'DESCRIPTION' in combined_data.columns and 'QTY' in combined_data.columns:
+                            na_mask = (combined_data['MFG'] == 'N/A') & (combined_data['MPN'] == 'N/A') & (combined_data['DESCRIPTION'] == 'N/A')
+                            rows_to_zero = na_mask.sum()
+                            if rows_to_zero > 0:
+                                combined_data.loc[na_mask, 'QTY'] = 0
+                                print(f"🔧 PRIMETALS DEBUG: Set QTY to 0 for {rows_to_zero} rows where MFG, MPN, and DESCRIPTION are all 'N/A'")
+                        
+                        combined_data = combined_data.reset_index(drop=True)
+                        print("🔧 PRIMETALS DEBUG: Dual-column data cleaning completed for OEMSecrets compatibility")
+                    
+                    print(f"🔧 PRIMETALS DEBUG: Final table shape: {combined_data.shape}")
+                    print(f"🔧 PRIMETALS DEBUG: Final columns: {combined_data.columns.tolist()}")
+                    
+                    return combined_data
+    
+    # If not a dual-column BOM, process as regular table
+    print("🔧 PRIMETALS DEBUG: Processing as regular single-column table")
+    
+    # Define header keywords for scoring
+    header_keywords = [
+        'ITEM', 'QTY', 'QUANTITY', 'PART', 'NUMBER', 'DESCRIPTION', 'DESC', 'MANUFACTURER', 'MFG', 'MPN', 'MFGPART'
+    ]
+    
+    best_score = 0
+    best_idx = 0
+    for idx in range(min(10, len(df))):  # Scan first 10 rows for best header
+        row = df.iloc[idx]
+        non_empty_cells = row.dropna().astype(str).str.upper().str.strip()
+        score = sum(any(kw in cell for kw in header_keywords) for cell in non_empty_cells)
+        print(f"🔧 PRIMETALS DEBUG: Row {idx} header score: {score} - {non_empty_cells.tolist()}")
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    
+    print(f"🔧 PRIMETALS DEBUG: Selected header row index: {best_idx} (score: {best_score})")
+
+    # Set the detected header row as columns
+    new_columns = df.iloc[best_idx].fillna('').astype(str).str.strip()
+    for i, col in enumerate(new_columns):
+        if col == '' or col == 'nan':
+            new_columns.iloc[i] = f'Column_{i}'
+    
+    df.columns = new_columns
+    # Remove all rows up to and including the header row
+    df = df.iloc[best_idx + 1:].reset_index(drop=True)
+    
+    print(f"🔧 PRIMETALS DEBUG: After header extraction - columns: {df.columns.tolist()}")
+    print(f"🔧 PRIMETALS DEBUG: After header extraction - shape: {df.shape}")
+
+    # Remove any duplicate header rows
+    df = df[~df.apply(lambda row: row.astype(str).str.strip().tolist() == df.columns.astype(str).tolist(), axis=1)]
+    df = df.reset_index(drop=True)
+    
+    # Remove rows that contain company/confidential information
+    confidential_keywords = [
+        'PRIMETALS TECHNOLOGIES', 'CONFIDENTIAL', 'PROPRIETARY', 'INTERNAL USE ONLY',
+        'NOT FOR DISTRIBUTION', 'COMPANY CONFIDENTIAL'
+    ]
+    
+    # Filter out confidential rows
+    original_length = len(df)
+    for keyword in confidential_keywords:
+        # Check each row for confidential keywords
+        mask = ~df.apply(lambda row: any(keyword in str(cell).upper() for cell in row), axis=1)
+        df = df[mask]
+    
+    if len(df) < original_length:
+        print(f"🔧 PRIMETALS DEBUG: Removed {original_length - len(df)} confidential/header rows")
+    
+    df = df.reset_index(drop=True)
+    
+    # Handle common Primetals column standardization
+    column_mapping = {
+        'ITEM': 'ITEM',
+        'ITEM NO': 'ITEM', 
+        'QTY': 'QTY',
+        'QUANTITY': 'QTY',
+        'PART NUMBER': 'MPN',
+        'PART': 'MPN',
+        'MFGPART': 'MPN',
+        'MFG PART': 'MPN',
+        'DESCRIPTION': 'DESCRIPTION',
+        'DESC': 'DESCRIPTION',
+        'MANUFACTURER': 'MFG',
+        'MFG': 'MFG',
+        'MPN': 'MPN',
+        'VENDOR': 'VENDOR',
+        'SUPPLIER': 'SUPPLIER'
+    }
+    
+    # Apply column mapping
+    for old_col, new_col in column_mapping.items():
+        matching_cols = [col for col in df.columns if old_col in str(col).upper()]
+        if matching_cols:
+            df.rename(columns={matching_cols[0]: new_col}, inplace=True)
+            print(f"🔧 PRIMETALS DEBUG: Renamed '{matching_cols[0]}' to '{new_col}'")
+    
+    # Clean data for OEMSecrets compatibility
+    if len(df) > 0:
+        print("🔧 PRIMETALS DEBUG: Cleaning data for OEMSecrets compatibility...")
+        
+        # Clean quantity fields - remove non-numeric characters
+        quantity_cols = [col for col in df.columns if any(qty_name in str(col).upper() for qty_name in ['QTY', 'QUANTITY', 'QUAN'])]
+        for col in quantity_cols:
+            if col in df.columns:
+                original_count = len(df[col].dropna())
+                # Extract only numeric characters and decimal points
+                df[col] = df[col].astype(str).str.replace(r'[^\d.]', '', regex=True)
+                # Remove empty strings and convert to proper format
+                df[col] = df[col].replace('', '1')  # Default to 1 if empty
+                # Handle multiple decimal points - keep only the first one
+                df[col] = df[col].str.replace(r'\.(?=.*\.)', '', regex=True)
+                # Convert to numeric, invalid entries become NaN
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                # Fill NaN with 1 (default quantity)
+                df[col] = df[col].fillna(1)
+                # Convert to integer if whole number, otherwise keep as float
+                df[col] = df[col].apply(lambda x: int(x) if x == int(x) else x)
+                cleaned_count = len(df[col].dropna())
+                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+        
+        # Clean part number fields - remove excessive whitespace and special characters that might cause issues
+        part_cols = [col for col in df.columns if any(part_name in str(col).upper() for part_name in ['PART', 'MPN', 'MFGPART'])]
+        for col in part_cols:
+            if col in df.columns:
+                original_count = len(df[col].dropna())
+                # Remove excessive whitespace
+                df[col] = df[col].astype(str).str.strip()
+                # Replace multiple spaces with single space
+                df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+                # Remove leading/trailing special characters that might cause issues
+                df[col] = df[col].str.replace(r'^[^\w\d]+|[^\w\d]+$', '', regex=True)
+                # Replace empty strings, 'nan', and 'None' with "N/A" for OEMSecrets compatibility
+                df[col] = df[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                cleaned_count = len(df[col][df[col] != 'N/A'])
+                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+        
+        # Clean manufacturer fields - standardize formatting
+        mfg_cols = [col for col in df.columns if any(mfg_name in str(col).upper() for mfg_name in ['MFG', 'MANUFACTURER', 'MANUF'])]
+        for col in mfg_cols:
+            if col in df.columns:
+                original_count = len(df[col].dropna())
+                # Remove excessive whitespace
+                df[col] = df[col].astype(str).str.strip()
+                # Replace multiple spaces with single space
+                df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+                # Standardize common manufacturer names
+                df[col] = df[col].str.replace(r'(?i)^siemens.*', 'SIEMENS', regex=True)
+                df[col] = df[col].str.replace(r'(?i)^abb.*', 'ABB', regex=True)
+                df[col] = df[col].str.replace(r'(?i)^schneider.*', 'SCHNEIDER', regex=True)
+                df[col] = df[col].str.replace(r'(?i)^eaton.*', 'EATON', regex=True)
+                # Replace empty strings, 'nan', and 'None' with "N/A" for OEMSecrets compatibility
+                df[col] = df[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                cleaned_count = len(df[col][df[col] != 'N/A'])
+                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+        
+        # Clean description fields - remove excessive whitespace and standardize
+        desc_cols = [col for col in df.columns if any(desc_name in str(col).upper() for desc_name in ['DESC', 'DESCRIPTION'])]
+        for col in desc_cols:
+            if col in df.columns:
+                original_count = len(df[col].dropna())
+                # Remove excessive whitespace
+                df[col] = df[col].astype(str).str.strip()
+                # Replace multiple spaces with single space
+                df[col] = df[col].str.replace(r'\s+', ' ', regex=True)
+                # Replace empty strings, 'nan', and 'None' with "N/A" for OEMSecrets compatibility
+                df[col] = df[col].replace(['', 'nan', 'None', 'NaN'], 'N/A')
+                cleaned_count = len(df[col][df[col] != 'N/A'])
+                print(f"🔧 PRIMETALS DEBUG: Cleaned {col} column - {original_count} entries processed, {cleaned_count} valid")
+        
+        # Fill all remaining empty cells with "N/A" to ensure OEMSecrets processes all rows
+        print("🔧 PRIMETALS DEBUG: Filling any remaining empty cells with 'N/A' for OEMSecrets compatibility...")
+        df = df.fillna('N/A')
+        df = df.replace(['', 'nan', 'None', 'NaN'], 'N/A')
+        
+        # Set QTY to 0 for rows where MFG, MPN, and DESCRIPTION are all "N/A"
+        # This prevents OEMSecrets from adding cost for non-existent parts
+        if 'MFG' in df.columns and 'MPN' in df.columns and 'DESCRIPTION' in df.columns and 'QTY' in df.columns:
+            na_mask = (df['MFG'] == 'N/A') & (df['MPN'] == 'N/A') & (df['DESCRIPTION'] == 'N/A')
+            rows_to_zero = na_mask.sum()
+            if rows_to_zero > 0:
+                df.loc[na_mask, 'QTY'] = 0
+                print(f"🔧 PRIMETALS DEBUG: Set QTY to 0 for {rows_to_zero} rows where MFG, MPN, and DESCRIPTION are all 'N/A'")
+        
+        # Don't remove rows with missing critical data - preserve exact PDF structure
+        print("🔧 PRIMETALS DEBUG: Preserving all rows to match PDF structure exactly")
+        
+        df = df.reset_index(drop=True)
+        print("🔧 PRIMETALS DEBUG: Data cleaning completed for OEMSecrets compatibility")
+    
+    print(f"🔧 PRIMETALS DEBUG: Final table shape: {df.shape}")
+    print(f"🔧 PRIMETALS DEBUG: Final columns: {df.columns.tolist()}")
+    if len(df) > 0:
+        print(f"🔧 PRIMETALS DEBUG: Sample of final data:\n{df.head(2)}")
+    print("🔧 PRIMETALS DEBUG: ===== END PRIMETALS PROCESSING =====\n")
+    
+    return df
+
+
 # Customer formatter registry
 CUSTOMER_FORMATTERS = {
     'farrell': clean_farrell_columns,
     'nel': clean_nel_columns,
-    'generic': clean_generic_columns
+    'generic': clean_generic_columns,
+    'primetals': clean_primetals_columns
 }
 
 

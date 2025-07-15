@@ -8,6 +8,7 @@ DEFAULT_CUSTOMER = "generic"
 CUSTOMER_DISPLAY_NAMES = {
     "farrell": "Farrell",
     "nel": "NEL",
+    "primetals": "Primetals",
     "generic": "Generic/Other"
 }
 
@@ -16,6 +17,7 @@ CUSTOMER_DISPLAY_NAMES = {
 AUTO_DETECTION_KEYWORDS = {
     "nel": ["NEL HYDROGEN", "PROTON ENERGY", "PROTON P/N"],
     "farrell": ["FARRELL"],
+    "primetals": ["PRIMETALS", "PRIMETALS TECHNOLOGIES"],
     # Add more customers here as needed
 }
 
@@ -30,6 +32,11 @@ CUSTOMER_SETTINGS = {
         "remove_instruction_rows": True,
         "header_keywords": ["ITEM", "QTY", "PART", "DESCRIPTION", "REFERENCE", "MFG"],
         "reject_keywords": ["CUT BACK", "REMOVE", "SHRINK TUBING", "DRAWING NUMBER"]
+    },
+    "primetals": {
+        "split_dual_column": True,
+        "header_keywords": ["ITEM", "MFG", "MFGPART", "DESCRIPTION", "QTY"],
+        "reject_keywords": ["PRIMETALS TECHNOLOGIES", "CONFIDENTIAL", "PROPRIETARY"]
     },
     "generic": {
         "header_keywords": ["ITEM", "QTY", "PART", "DESCRIPTION", "MANUFACTURER"]

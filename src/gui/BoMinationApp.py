@@ -86,6 +86,13 @@ from pipeline.validation_utils import (
     validate_output_directory
 )
 
+# Import OCR functionality
+from pipeline.ocr_preprocessor import (
+    check_ocrmypdf_installation,
+    check_tesseract_installation,
+    get_ocr_installation_instructions
+)
+
 # Default path to cost sheet template
 # Support both script and PyInstaller .exe paths
 if getattr(sys, 'frozen', False):
@@ -93,7 +100,7 @@ if getattr(sys, 'frozen', False):
     SCRIPT_DIR = Path(sys._MEIPASS) / "src"
     COST_SHEET_TEMPLATE = Path(sys._MEIPASS) / "Files" / "OCTF-1539-COST SHEET.xlsx"
 else:
-    # Running as script - go up two levels from src/gui/ to root, then to Files/
+     # Running as script - go up two levels from src/gui/ to root, then to Files/
     SCRIPT_DIR = Path(__file__).parent.parent.parent  # Go from src/gui to root
     COST_SHEET_TEMPLATE = SCRIPT_DIR / "Files" / "OCTF-1539-COST SHEET.xlsx"
 
@@ -432,7 +439,7 @@ class BoMApp:
         company_dropdown = ttk.Combobox(
             company_frame,
             textvariable=self.company_name,
-            values=["", "Farrell", "NEL"],
+            values=["", "Farrell", "NEL", "Primetals"],
             state="readonly",
             font=("Segoe UI", 10),
             width=30
@@ -933,6 +940,39 @@ Invalid formats:
             warnings.append("ChromeDriver not available")
         else:
             self.add_log_message(f"ChromeDriver detected: {chrome_version}", "success")
+        
+        # Check OCR (optional but recommended)
+        ocr_available, ocr_version, ocr_error = check_ocrmypdf_installation()
+        tesseract_available, tesseract_version, tesseract_error = check_tesseract_installation()
+        
+        if ocr_available and tesseract_available:
+            self.add_log_message(f"OCR available: {ocr_version}", "success")
+            self.add_log_message(f"Tesseract available: {tesseract_version}", "success")
+        else:
+            self.add_log_message("OCR not available - recommended for image-based PDFs", "warning")
+            if not ocr_available:
+                self.add_log_message(f"OCRmyPDF: {ocr_error}", "warning")
+            if not tesseract_available:
+                self.add_log_message(f"Tesseract: {tesseract_error}", "warning")
+            
+            # Show OCR installation info
+            response = Messagebox.show_question(
+                "OCR Recommended",
+                "OCR (Optical Character Recognition) is recommended for better table extraction from image-based PDFs.\n\n" +
+                "Without OCR, some PDFs may fail to extract tables properly.\n\n" +
+                "Would you like to see installation instructions?",
+                parent=self.root
+            )
+            if response == "Yes":
+                # Show installation instructions
+                instructions = get_ocr_installation_instructions()
+                CopyableErrorDialog(
+                    self.root,
+                    "OCR Installation Instructions",
+                    instructions,
+                    None
+                ).show()
+            warnings.append("OCR not available (optional but recommended)")
         
         # Show summary if there are warnings
         if warnings:
