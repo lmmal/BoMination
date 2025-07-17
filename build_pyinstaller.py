@@ -51,8 +51,8 @@ def build_app():
     current_dir = Path(__file__).parent
     src_dir = current_dir / "src"
     
-    # Main script path
-    main_script = str(src_dir / "BoMinationApp.py")
+    # Main script path - use the wrapper script in root directory
+    main_script = str(current_dir / "BoMinationApp_wrapper.py")
     
     # Chromedriver path
     chromedriver_path = str(src_dir / "chromedriver.exe")
@@ -83,14 +83,30 @@ def build_app():
     
     print("✅ All critical files found!")
     
-    # All Python source files that might be called as subprocesses
-    src_files = [
-        str(src_dir / "main_pipeline.py"),
-        str(src_dir / "extract_bom_tab.py"),
-        str(src_dir / "lookup_price.py"),
-        str(src_dir / "map_cost_sheet.py"),
-        str(src_dir / "validation_utils.py"),
+    # All Python source files organized by subdirectory
+    pipeline_files = [
+        str(src_dir / "pipeline" / "main_pipeline.py"),
+        str(src_dir / "pipeline" / "extract_main.py"),
+        str(src_dir / "pipeline" / "extract_bom_tab.py"),
+        str(src_dir / "pipeline" / "extract_bom_cam.py"),
+        str(src_dir / "pipeline" / "lookup_price.py"),
+        str(src_dir / "pipeline" / "map_cost_sheet.py"),
+        str(src_dir / "pipeline" / "validation_utils.py"),
+        str(src_dir / "pipeline" / "ocr_preprocessor.py"),
     ]
+    
+    gui_files = [
+        str(src_dir / "gui" / "review_window.py"),
+        str(src_dir / "gui" / "roi_picker.py"),
+        str(src_dir / "gui" / "table_selector.py"),
+    ]
+    
+    customer_files = [
+        str(src_dir / "omni_cust" / "customer_config.py"),
+        str(src_dir / "omni_cust" / "customer_formatters.py"),
+    ]
+    
+    all_src_files = pipeline_files + gui_files + customer_files
     
     # Build arguments for PyInstaller
     args = [
@@ -99,6 +115,10 @@ def build_app():
         '--onefile',  # Create a single executable
         '--windowed',  # Don't show console window
         '--noconfirm',  # Overwrite output directory without confirmation
+        f'--paths={src_dir}',  # Add src directory to Python path
+        f'--paths={src_dir}/pipeline',  # Add pipeline directory to Python path
+        f'--paths={src_dir}/gui',  # Add gui directory to Python path
+        f'--paths={src_dir}/omni_cust',  # Add omni_cust directory to Python path
         f'--add-data={chromedriver_path};.',  # Include chromedriver
         f'--add-data={cost_sheet_path};Files',  # Include cost sheet template
         f'--add-data={src_dir};src',  # Include all source files
@@ -120,11 +140,30 @@ def build_app():
         '--hidden-import=packaging.version',
         '--hidden-import=packaging.specifiers',
         '--hidden-import=packaging.requirements',
+        '--hidden-import=pipeline',
+        '--hidden-import=pipeline.main_pipeline',
+        '--hidden-import=pipeline.extract_main',
+        '--hidden-import=pipeline.extract_bom_tab',
+        '--hidden-import=pipeline.extract_bom_cam',
+        '--hidden-import=pipeline.lookup_price',
+        '--hidden-import=pipeline.map_cost_sheet',
+        '--hidden-import=pipeline.validation_utils',
+        '--hidden-import=pipeline.ocr_preprocessor',
+        '--hidden-import=gui',
+        '--hidden-import=gui.review_window',
+        '--hidden-import=gui.roi_picker',
+        '--hidden-import=gui.table_selector',
+        '--hidden-import=omni_cust',
+        '--hidden-import=omni_cust.customer_config',
+        '--hidden-import=omni_cust.customer_formatters',
         '--collect-submodules=selenium',
         '--collect-submodules=ttkbootstrap',
         '--collect-submodules=pandas',
         '--collect-submodules=tabula',
         '--collect-submodules=packaging',
+        '--collect-submodules=pipeline',
+        '--collect-submodules=gui',
+        '--collect-submodules=omni_cust',
         '--collect-data=ttkbootstrap',
         '--collect-data=tabula',
         '--additional-hooks-dir=.',  # Include our custom hooks
@@ -148,7 +187,7 @@ def build_app():
     print(f"📄 Main script: {main_script}")
     print(f"🌐 Chromedriver: {chromedriver_path}")
     print(f"📊 Cost sheet: {cost_sheet_path}")
-    print(f"📁 Source files: {len(src_files)} files")
+    print(f"📁 Source files: {len(all_src_files)} files")
     print(f"🎯 Output: dist/BoMinationApp.exe")
     print()
     

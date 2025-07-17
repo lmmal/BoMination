@@ -1,0 +1,16 @@
+# BoMination Application - Quick Start
+
+## For Sales Team Members:
+1. Double-click `BoMinationApp.exe` to launch the application
+2. If Windows shows a security warning, click "More info" then "Run anyway"
+3. See the DISTRIBUTION_README.md for detailed instructions
+
+## What's Included:
+- BoMinationApp.exe (168.8 MB) - The main application
+- deploy.bat - Optional test script
+- QUICK_START.txt - This quick start guide
+
+## No Installation Required!
+This is a portable application - just double-click and run.
+
+For technical support, contact your IT department.
