@@ -60,6 +60,15 @@ except ImportError:
     def show_review_window(*args, **kwargs):
         raise ImportError("Review window module not available")
 
+# Import the settings tab module
+try:
+    from gui.settings_tab import SettingsTab
+except ImportError:
+    # Fallback for development mode
+    class SettingsTab:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("Settings tab module not available")
+
 # Suppress known Tkinter destructor warnings in Python 3.12
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="tkinter")
 
@@ -362,20 +371,40 @@ class BoMApp:
         self.build_gui()
 
     def build_gui(self):
-        # Main container with padding
-        main_container = ttk.Frame(self.root)
-        main_container.pack(fill=BOTH, expand=True, padx=20, pady=20)
+        # Create notebook for tabs
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        
+        # Main tab
+        main_tab = ttk.Frame(notebook)
+        notebook.add(main_tab, text="Main")
+        
+        # Settings tab
+        settings_tab = ttk.Frame(notebook)
+        notebook.add(settings_tab, text="Settings")
+        
+        # Build main tab content
+        self.build_main_tab(main_tab)
+        
+        # Build settings tab content
+        self.settings_tab_instance = SettingsTab(settings_tab, self)
+    
+    def build_main_tab(self, main_container):
+        """Build the main tab interface."""
+        # Add padding to main container
+        main_container_padded = ttk.Frame(main_container)
+        main_container_padded.pack(fill=BOTH, expand=True, padx=20, pady=20)
         
         # Title with modern styling
         title_label = ttk.Label(
-            main_container, 
+            main_container_padded, 
             text="BoMination", 
             font=("Segoe UI", 24, "bold")
         )
         title_label.pack(pady=(0, 5))
         
         subtitle_label = ttk.Label(
-            main_container, 
+            main_container_padded, 
             text="BoM Processing Pipeline", 
             font=("Segoe UI", 12),
             bootstyle="secondary"
@@ -383,7 +412,7 @@ class BoMApp:
         subtitle_label.pack(pady=(0, 30))
         
         # Step 1: PDF File Selection
-        pdf_frame = ttk.LabelFrame(main_container, text="Step 1: Select BoM PDF File", padding=15)
+        pdf_frame = ttk.LabelFrame(main_container_padded, text="Step 1: Select BoM PDF File", padding=15)
         pdf_frame.pack(fill=X, pady=(0, 15))
         
         pdf_entry_frame = ttk.Frame(pdf_frame)
@@ -405,7 +434,7 @@ class BoMApp:
         ).pack(side=RIGHT)
         
         # Step 2: Page Range
-        page_frame = ttk.LabelFrame(main_container, text="Step 2: Enter Page Range", padding=15)
+        page_frame = ttk.LabelFrame(main_container_padded, text="Step 2: Enter Page Range", padding=15)
         page_frame.pack(fill=X, pady=(0, 15))
         
         page_entry_frame = ttk.Frame(page_frame)
@@ -437,7 +466,7 @@ class BoMApp:
         examples_label.pack(anchor=W, pady=(5, 0))
 
         # Step 3: Company Selection
-        company_frame = ttk.LabelFrame(main_container, text="Step 3: Select Company (Optional)", padding=15)
+        company_frame = ttk.LabelFrame(main_container_padded, text="Step 3: Select Company (Optional)", padding=15)
         company_frame.pack(fill=X, pady=(0, 15))
         
         company_dropdown = ttk.Combobox(
@@ -460,88 +489,8 @@ class BoMApp:
         )
         company_info_label.pack(anchor=W, pady=(5, 0))
 
-        # Step 4: Table Detection Mode
-        tabula_frame = ttk.LabelFrame(main_container, text="Step 4: Table Detection Mode (Advanced)", padding=15)
-        tabula_frame.pack(fill=X, pady=(0, 15))
-        
-        tabula_dropdown = ttk.Combobox(
-            tabula_frame,
-            textvariable=self.tabula_mode,
-            values=["conservative", "balanced", "aggressive"],
-            state="readonly",
-            font=("Segoe UI", 10),
-            width=30
-        )
-        tabula_dropdown.pack(anchor=W, pady=5)
-        tabula_dropdown.current(1)  # default to balanced
-        
-        # Info label for tabula mode
-        tabula_info_label = ttk.Label(
-            tabula_frame, 
-            text="• Conservative: Fewer false positives, may miss some tables\n• Balanced: Good compromise between accuracy and completeness\n• Aggressive: Detects more tables, but may include non-table content", 
-            font=("Segoe UI", 9),
-            bootstyle="secondary",
-            justify=tk.LEFT
-        )
-        tabula_info_label.pack(anchor=W, pady=(5, 0))
-
-        # Step 4.5: ROI Selection Mode
-        roi_frame = ttk.LabelFrame(main_container, text="Step 4.5: Manual Table Area Selection (Optional)", padding=15)
-        roi_frame.pack(fill=X, pady=(0, 15))
-        
-        roi_checkbox = ttk.Checkbutton(
-            roi_frame,
-            text="Use manual table area selection (ROI)",
-            variable=self.use_roi,
-            bootstyle="primary"
-        )
-        roi_checkbox.pack(anchor=W, pady=5)
-        
-        # Info label for ROI mode
-        roi_info_label = ttk.Label(
-            roi_frame, 
-            text="When enabled, you can manually select table areas on each page for more precise extraction.\n"
-                 "This is useful when automatic table detection fails or you need to select specific table regions.\n"
-                 "💡 TIP: Try ROI mode if automatic extraction finds tables but they contain poor quality text.",
-            font=("Segoe UI", 9),
-            bootstyle="secondary",
-            justify=tk.LEFT
-        )
-        roi_info_label.pack(anchor=W, pady=(5, 0))
-
-        # Step 5: Output Directory Selection
-        output_frame = ttk.LabelFrame(main_container, text="Step 5: Choose Output Directory (Optional)", padding=15)
-        output_frame.pack(fill=X, pady=(0, 20))
-        
-        output_entry_frame = ttk.Frame(output_frame)
-        output_entry_frame.pack(fill=X, pady=5)
-        
-        ttk.Entry(
-            output_entry_frame, 
-            textvariable=self.output_directory, 
-            font=("Segoe UI", 10),
-            width=50
-        ).pack(side=LEFT, fill=X, expand=True, padx=(0, 10))
-        
-        ttk.Button(
-            output_entry_frame, 
-            text="Browse", 
-            command=self.browse_output_directory,
-            bootstyle="outline-primary",
-            width=10
-        ).pack(side=RIGHT)
-        
-        # Info label for output directory
-        output_info_label = ttk.Label(
-            output_frame, 
-            text="If not specified, files will be saved next to the input PDF", 
-            font=("Segoe UI", 9),
-            bootstyle="secondary"
-        )
-        output_info_label.pack(anchor=W, pady=(5, 0))
-
         # Action buttons frame
-        button_frame = ttk.Frame(main_container)
+        button_frame = ttk.Frame(main_container_padded)
         button_frame.pack(fill=X, pady=20)
         
         # Run Button with modern styling
@@ -555,7 +504,7 @@ class BoMApp:
         run_button.pack(side=LEFT, padx=(0, 10))
         
         # Status/Progress area with modern card styling
-        status_frame = ttk.Frame(main_container)
+        status_frame = ttk.Frame(main_container_padded)
         status_frame.pack(fill=X, pady=(20, 0))
         
         # Progress card
@@ -710,13 +659,6 @@ Invalid formats:
             self.pdf_path.set(file_path)
             self.add_log_message(f"Selected PDF: {Path(file_path).name}", "info")
 
-    def browse_output_directory(self):
-        """Browse for output directory selection."""
-        directory = filedialog.askdirectory(title="Select Output Directory")
-        if directory:
-            self.output_directory.set(directory)
-            self.add_log_message(f"Selected output directory: {directory}", "info")
-
     def run_pipeline(self):
         """Run the pipeline with comprehensive input validation."""
         pdf = self.pdf_path.get()
@@ -742,8 +684,8 @@ Invalid formats:
             Messagebox.show_error("Invalid Output Directory", output_error, parent=self.root)
             return
 
-        # Step 4: Check system requirements
-        self.check_system_requirements()
+        # Step 4: Check system requirements (silent mode for pipeline)
+        self.check_system_requirements(silent=True)
 
         # Add template validation logging
         if COST_SHEET_TEMPLATE.exists():
@@ -1056,23 +998,28 @@ Invalid formats:
 
         threading.Thread(target=background_task).start()
 
-    def check_system_requirements(self):
-        """Check and warn about system requirements."""
+    def check_system_requirements(self, silent=False):
+        """Check and warn about system requirements.
+        
+        Args:
+            silent (bool): If True, only log warnings without showing popup dialogs
+        """
         warnings = []
         
         # Check Java
         java_installed, java_version, java_error = check_java_installation()
         if not java_installed:
             self.add_log_message("Java not detected - required for PDF extraction", "warning")
-            response = Messagebox.show_question(
-                "Java Not Found",
-                "Java is required for PDF table extraction.\n\n" + 
-                (java_error or "Java not detected.") + 
-                "\n\nWould you like to download Java now?",
-                parent=self.root
-            )
-            if response == "Yes":
-                open_help_url("https://www.java.com/download/")
+            if not silent:
+                response = Messagebox.show_question(
+                    "Java Not Found",
+                    "Java is required for PDF table extraction.\n\n" + 
+                    (java_error or "Java not detected.") + 
+                    "\n\nWould you like to download Java now?",
+                    parent=self.root
+                )
+                if response == "Yes":
+                    open_help_url("https://www.java.com/download/")
             warnings.append("Java not installed")
         else:
             self.add_log_message(f"Java detected: {java_version}", "success")
@@ -1082,15 +1029,16 @@ Invalid formats:
         if not chrome_available:
             self.add_log_message("ChromeDriver not available - required for price lookup", "warning")
             self.add_log_message(f"ChromeDriver error: {chrome_error}", "error")
-            response = Messagebox.show_question(
-                "ChromeDriver Not Found",
-                "ChromeDriver is required for price lookup.\n\n" + 
-                (chrome_error or "ChromeDriver not detected.") + 
-                "\n\nWould you like to open the ChromeDriver download page?",
-                parent=self.root
-            )
-            if response == "Yes":
-                open_help_url("https://chromedriver.chromium.org/downloads")
+            if not silent:
+                response = Messagebox.show_question(
+                    "ChromeDriver Not Found",
+                    "ChromeDriver is required for price lookup.\n\n" + 
+                    (chrome_error or "ChromeDriver not detected.") + 
+                    "\n\nWould you like to open the ChromeDriver download page?",
+                    parent=self.root
+                )
+                if response == "Yes":
+                    open_help_url("https://chromedriver.chromium.org/downloads")
             warnings.append("ChromeDriver not available")
         else:
             self.add_log_message(f"ChromeDriver detected: {chrome_version}", "success")
@@ -1109,31 +1057,32 @@ Invalid formats:
             if not tesseract_available:
                 self.add_log_message(f"Tesseract: {tesseract_error}", "warning")
             
-            # Show OCR installation info
-            response = Messagebox.show_question(
-                "OCR Recommended",
-                "OCR (Optical Character Recognition) is recommended for better table extraction from image-based PDFs.\n\n" +
-                "Without OCR, some PDFs may fail to extract tables properly.\n\n" +
-                "Would you like to see installation instructions?",
-                parent=self.root
-            )
-            if response == "Yes":
-                # Show installation instructions
-                instructions = get_ocr_installation_instructions()
-                CopyableErrorDialog(
-                    self.root,
-                    "OCR Installation Instructions",
-                    instructions,
-                    None
-                ).show()
+            # Only show OCR popup if not in silent mode
+            if not silent:
+                response = Messagebox.show_question(
+                    "OCR Recommended",
+                    "OCR (Optical Character Recognition) is recommended for better table extraction from image-based PDFs.\n\n" +
+                    "Without OCR, some PDFs may fail to extract tables properly.\n\n" +
+                    "Would you like to see installation instructions?",
+                    parent=self.root
+                )
+                if response == "Yes":
+                    # Show installation instructions
+                    instructions = get_ocr_installation_instructions()
+                    CopyableErrorDialog(
+                        self.root,
+                        "OCR Installation Instructions",
+                        instructions,
+                        None
+                    ).show()
             warnings.append("OCR not available (optional but recommended)")
         
-        # Show summary if there are warnings
-        if warnings:
+        # Show summary if there are warnings (only in non-silent mode)
+        if warnings and not silent:
             warning_text = "System Requirements Warning:\n\n" + "\n".join([f"• {w}" for w in warnings])
             warning_text += "\n\nYou can still try to run the pipeline, but some features may not work properly."
             Messagebox.show_warning("System Requirements", warning_text, parent=self.root)
-        else:
+        elif not warnings:
             self.add_log_message("All system requirements met", "success")
 
 # Review window functionality has been moved to review_window.py
@@ -1181,8 +1130,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"⚠️ Could not load application icon: {e}")
         
-        root.iconify()  # Start minimized to prevent flash
-        
         # Add proper cleanup handler
         def on_closing():
             try:
@@ -1194,7 +1141,9 @@ if __name__ == "__main__":
         root.protocol("WM_DELETE_WINDOW", on_closing)
         
         app = BoMApp(root)
-        root.deiconify()  # Show the window after initialization
+        
+        # Start maximized
+        root.state('zoomed')  # Windows-specific maximized state
         root.mainloop()
         
     except Exception as e:

@@ -51,8 +51,8 @@ def build_app():
     current_dir = Path(__file__).parent
     src_dir = current_dir / "src"
     
-    # Main script path - use the wrapper script in root directory
-    main_script = str(current_dir / "BoMinationApp_wrapper.py")
+    # Main script path - use the main BoMinationApp.py directly
+    main_script = str(src_dir / "gui" / "BoMinationApp.py")
     
     # Chromedriver path
     chromedriver_path = str(src_dir / "chromedriver.exe")
@@ -99,6 +99,7 @@ def build_app():
         str(src_dir / "gui" / "review_window.py"),
         str(src_dir / "gui" / "roi_picker.py"),
         str(src_dir / "gui" / "table_selector.py"),
+        str(src_dir / "gui" / "settings_tab.py"),  # New settings tab
     ]
     
     customer_files = [
@@ -153,6 +154,7 @@ def build_app():
         '--hidden-import=gui.review_window',
         '--hidden-import=gui.roi_picker',
         '--hidden-import=gui.table_selector',
+        '--hidden-import=gui.settings_tab',  # New settings tab
         '--hidden-import=omni_cust',
         '--hidden-import=omni_cust.customer_config',
         '--hidden-import=omni_cust.customer_formatters',
