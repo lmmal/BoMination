@@ -9,6 +9,7 @@ import threading
 import sys
 import time
 import webbrowser
+import json
 from pathlib import Path
 from datetime import datetime
 import warnings
@@ -342,18 +343,21 @@ class BoMApp:
     def __init__(self, root):
         self.root = root
         self.root.title("BoMination - BoM Processing Pipeline")
-        self.root.geometry("700x800")  # Increased height for log panel
+        self.root.geometry("700x600")  # Reduced height since log panel removed
         self.root.resizable(True, True)
 
         self.pdf_path = tk.StringVar()
         self.page_range = tk.StringVar()
         self.company_name = tk.StringVar(value="")  # default to blank
         self.output_directory = tk.StringVar()  # Output directory selection
+        self.tabula_mode = tk.StringVar(value="balanced")  # Default to balanced mode
 
-        # Progress and logging components
+        # Add ROI selection variable
+        self.use_roi = tk.BooleanVar(value=False)  # Default to automatic mode
+
+        # Progress components
         self.progress_var = tk.StringVar(value="Ready to process your BoM files")
         self.progress_bar = None
-        self.log_text = None
         
         self.build_gui()
 
@@ -439,7 +443,7 @@ class BoMApp:
         company_dropdown = ttk.Combobox(
             company_frame,
             textvariable=self.company_name,
-            values=["", "Farrell", "NEL", "Primetals"],
+            values=["", "Farrell", "NEL", "Primetals", "Riley Power", "Shanklin", "901D", "Amazon"],
             state="readonly",
             font=("Segoe UI", 10),
             width=30
@@ -456,8 +460,57 @@ class BoMApp:
         )
         company_info_label.pack(anchor=W, pady=(5, 0))
 
-        # Step 4: Output Directory Selection
-        output_frame = ttk.LabelFrame(main_container, text="Step 4: Choose Output Directory (Optional)", padding=15)
+        # Step 4: Table Detection Mode
+        tabula_frame = ttk.LabelFrame(main_container, text="Step 4: Table Detection Mode (Advanced)", padding=15)
+        tabula_frame.pack(fill=X, pady=(0, 15))
+        
+        tabula_dropdown = ttk.Combobox(
+            tabula_frame,
+            textvariable=self.tabula_mode,
+            values=["conservative", "balanced", "aggressive"],
+            state="readonly",
+            font=("Segoe UI", 10),
+            width=30
+        )
+        tabula_dropdown.pack(anchor=W, pady=5)
+        tabula_dropdown.current(1)  # default to balanced
+        
+        # Info label for tabula mode
+        tabula_info_label = ttk.Label(
+            tabula_frame, 
+            text="• Conservative: Fewer false positives, may miss some tables\n• Balanced: Good compromise between accuracy and completeness\n• Aggressive: Detects more tables, but may include non-table content", 
+            font=("Segoe UI", 9),
+            bootstyle="secondary",
+            justify=tk.LEFT
+        )
+        tabula_info_label.pack(anchor=W, pady=(5, 0))
+
+        # Step 4.5: ROI Selection Mode
+        roi_frame = ttk.LabelFrame(main_container, text="Step 4.5: Manual Table Area Selection (Optional)", padding=15)
+        roi_frame.pack(fill=X, pady=(0, 15))
+        
+        roi_checkbox = ttk.Checkbutton(
+            roi_frame,
+            text="Use manual table area selection (ROI)",
+            variable=self.use_roi,
+            bootstyle="primary"
+        )
+        roi_checkbox.pack(anchor=W, pady=5)
+        
+        # Info label for ROI mode
+        roi_info_label = ttk.Label(
+            roi_frame, 
+            text="When enabled, you can manually select table areas on each page for more precise extraction.\n"
+                 "This is useful when automatic table detection fails or you need to select specific table regions.\n"
+                 "💡 TIP: Try ROI mode if automatic extraction finds tables but they contain poor quality text.",
+            font=("Segoe UI", 9),
+            bootstyle="secondary",
+            justify=tk.LEFT
+        )
+        roi_info_label.pack(anchor=W, pady=(5, 0))
+
+        # Step 5: Output Directory Selection
+        output_frame = ttk.LabelFrame(main_container, text="Step 5: Choose Output Directory (Optional)", padding=15)
         output_frame.pack(fill=X, pady=(0, 20))
         
         output_entry_frame = ttk.Frame(output_frame)
@@ -501,16 +554,6 @@ class BoMApp:
         )
         run_button.pack(side=LEFT, padx=(0, 10))
         
-        # Test button with updated styling
-        test_button = ttk.Button(
-            button_frame, 
-            text="Test Error Dialog", 
-            command=self.test_error_dialog,
-            bootstyle="warning-outline",
-            width=18
-        )
-        test_button.pack(side=LEFT)
-        
         # Status/Progress area with modern card styling
         status_frame = ttk.Frame(main_container)
         status_frame.pack(fill=X, pady=(20, 0))
@@ -537,52 +580,7 @@ class BoMApp:
         )
         self.progress_bar.pack(fill=X, pady=(0, 5))
         
-        # Operation Log Panel
-        log_frame = ttk.LabelFrame(main_container, text="Operation Log", padding=10)
-        log_frame.pack(fill=BOTH, expand=True, pady=(10, 0))
-        
-        # Create scrollable text widget for logs
-        log_scroll_frame = ttk.Frame(log_frame)
-        log_scroll_frame.pack(fill=BOTH, expand=True)
-        
-        self.log_text = tk.Text(
-            log_scroll_frame,
-            wrap=tk.WORD,
-            height=8,
-            font=("Consolas", 9),
-            relief="flat",
-            borderwidth=0,
-            bg="#f8f9fa",  # Light background
-            state=tk.DISABLED
-        )
-        
-        log_scrollbar = ttk.Scrollbar(log_scroll_frame, orient=VERTICAL, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=log_scrollbar.set)
-        
-        self.log_text.pack(side=LEFT, fill=BOTH, expand=True)
-        log_scrollbar.pack(side=RIGHT, fill=Y)
-        
-        # Log controls
-        log_controls = ttk.Frame(log_frame)
-        log_controls.pack(fill=X, pady=(10, 0))
-        
-        ttk.Button(
-            log_controls,
-            text="Copy Log",
-            command=self.copy_log,
-            bootstyle="outline-secondary",
-            width=12
-        ).pack(side=LEFT, padx=(0, 10))
-        
-        ttk.Button(
-            log_controls,
-            text="Clear Log",
-            command=self.clear_log,
-            bootstyle="outline-danger",
-            width=12
-        ).pack(side=LEFT)
-        
-        # Add initial log message
+        # Add initial status message
         self.add_log_message("Welcome to BoMination! Select a PDF file and configure settings to begin.", "info")
 
     def start_progress(self, message="Processing..."):
@@ -591,8 +589,17 @@ class BoMApp:
             self.progress_var.set(f"🔄 {message}")
             self.progress_bar.start(10)  # Update every 10ms for smooth animation
         
-        # Ensure GUI update happens on main thread
-        self.root.after(0, _start)
+        # Ensure GUI update happens on main thread with error handling
+        try:
+            self.root.after(0, _start)
+        except RuntimeError as e:
+            # If main thread is not in main loop, print to console instead
+            print(f"[GUI UPDATE] start_progress: {message} (GUI update failed: {e})")
+            # Try direct update as fallback
+            try:
+                _start()
+            except:
+                pass
     
     def stop_progress(self, message="Ready"):
         """Stop the progress bar and update status."""
@@ -600,8 +607,17 @@ class BoMApp:
             self.progress_bar.stop()
             self.progress_var.set(f"{message}")
         
-        # Ensure GUI update happens on main thread
-        self.root.after(0, _stop)
+        # Ensure GUI update happens on main thread with error handling
+        try:
+            self.root.after(0, _stop)
+        except RuntimeError as e:
+            # If main thread is not in main loop, print to console instead
+            print(f"[GUI UPDATE] stop_progress: {message} (GUI update failed: {e})")
+            # Try direct update as fallback
+            try:
+                _stop()
+            except:
+                pass
     
     def complete_progress(self):
         """Complete the progress and reset to ready state."""
@@ -609,61 +625,53 @@ class BoMApp:
             self.progress_bar.stop()
             self.progress_var.set("✅ Ready for next operation")
         
-        self.root.after(0, _complete)
+        # Ensure GUI update happens on main thread with error handling
+        try:
+            self.root.after(0, _complete)
+        except RuntimeError as e:
+            # If main thread is not in main loop, print to console instead
+            print(f"[GUI UPDATE] complete_progress (GUI update failed: {e})")
+            # Try direct update as fallback
+            try:
+                _complete()
+            except:
+                pass
     
     def update_status(self, message):
         """Update the status message without affecting progress bar."""
         def _update():
             self.progress_var.set(message)
         
-        self.root.after(0, _update)
+        # Ensure GUI update happens on main thread with error handling
+        try:
+            self.root.after(0, _update)
+        except RuntimeError as e:
+            # If main thread is not in main loop, print to console instead
+            print(f"[GUI UPDATE] update_status: {message} (GUI update failed: {e})")
+            # Try direct update as fallback
+            try:
+                _update()
+            except:
+                pass
     
     def add_log_message(self, message, level="info"):
-        """Add a timestamped message to the log panel."""
-        def _add_log():
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            
-            # Color coding based on level
-            level_icons = {
-                "info": "ℹ️",
-                "success": "✅", 
-                "warning": "⚠️",
-                "error": "❌",
-                "step": "🔸"
-            }
-            
-            icon = level_icons.get(level, "•")
-            formatted_message = f"[{timestamp}] {icon} {message}\n"
-            
-            # Add to log text widget
-            self.log_text.config(state=tk.NORMAL)
-            self.log_text.insert(tk.END, formatted_message)
-            self.log_text.see(tk.END)  # Auto-scroll to bottom
-            self.log_text.config(state=tk.DISABLED)
+        """Print a timestamped message to console (log panel removed)."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
         
-        # Ensure GUI update happens on main thread
-        self.root.after(0, _add_log)
-    
-    def copy_log(self):
-        """Copy the entire log to clipboard."""
-        self.log_text.config(state=tk.NORMAL)
-        log_content = self.log_text.get(1.0, tk.END).strip()
-        self.log_text.config(state=tk.DISABLED)
+        # Color coding based on level
+        level_icons = {
+            "info": "ℹ️",
+            "success": "✅", 
+            "warning": "⚠️",
+            "error": "❌",
+            "step": "🔸"
+        }
         
-        if log_content:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(log_content)
-            self.root.update()
-            self.add_log_message("Log copied to clipboard", "success")
-        else:
-            self.add_log_message("No log content to copy", "warning")
-    
-    def clear_log(self):
-        """Clear the log panel."""
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.config(state=tk.DISABLED)
-        self.add_log_message("Log cleared", "info")
+        icon = level_icons.get(level, "•")
+        formatted_message = f"[{timestamp}] {icon} {message}"
+        
+        # Print to console instead of GUI log
+        print(formatted_message)
 
     def show_page_range_help(self):
         """Show detailed help for page range format."""
@@ -743,16 +751,66 @@ Invalid formats:
         else:
             self.add_log_message(f"Cost sheet template not found: {COST_SHEET_TEMPLATE}", "warning")
 
+        # Step 5: Handle ROI selection BEFORE starting background thread
+        roi_areas = None
+        if self.use_roi.get():
+            self.add_log_message("ROI mode enabled - showing table area selection", "step")
+            self.add_log_message(f"🐛 DEBUG: About to call show_roi_picker with PDF: {pdf}, pages: {pages}", "info")
+            self.update_status("⏳ Waiting for user to select table areas...")
+            
+            try:
+                # Import and show ROI picker on main thread
+                from gui.roi_picker import show_roi_picker
+                self.add_log_message("🐛 DEBUG: ROI picker imported successfully", "info")
+                
+                self.add_log_message("🐛 DEBUG: Calling show_roi_picker now...", "info")
+                roi_areas = show_roi_picker(pdf, pages, parent_window=self.root)
+                self.add_log_message("🐛 DEBUG: show_roi_picker call completed", "info")
+                
+                self.add_log_message(f"🐛 DEBUG: ROI picker returned: {roi_areas}", "info")
+                self.add_log_message(f"🐛 DEBUG: ROI picker returned type: {type(roi_areas)}", "info")
+                
+                if roi_areas:
+                    self.add_log_message(f"ROI selection completed - selected {len(roi_areas)} table areas", "success")
+                    self.add_log_message(f"🐛 DEBUG: ROI areas data: {roi_areas}", "info")
+                    # Store ROI areas in environment for background thread
+                    import json
+                    roi_json = json.dumps(roi_areas)
+                    os.environ["BOM_ROI_AREAS"] = roi_json
+                    self.add_log_message(f"🐛 DEBUG: Stored ROI areas in environment: {roi_json}", "info")
+                else:
+                    self.add_log_message("🐛 DEBUG: ROI picker returned None or empty result", "warning")
+                    self.add_log_message("ROI selection cancelled", "warning")
+                    Messagebox.show_info("ROI Selection Cancelled", "ROI selection was cancelled. Please try again.", parent=self.root)
+                    return
+                    
+            except Exception as e:
+                self.add_log_message(f"🐛 DEBUG: Exception in ROI selection: {e}", "error")
+                self.add_log_message(f"ROI selection error: {e}", "error")
+                Messagebox.show_error("ROI Selection Error", f"Failed to show ROI selector: {e}", parent=self.root)
+                return
+
         # If all validations pass, proceed with pipeline
+        self.add_log_message("🐛 DEBUG: Setting environment variables for pipeline", "info")
         os.environ["BOM_PDF_PATH"] = pdf
         os.environ["BOM_PAGE_RANGE"] = pages
         os.environ["BOM_COMPANY"] = company
         os.environ["BOM_OUTPUT_DIRECTORY"] = self.output_directory.get() or ""
+        os.environ["BOM_USE_ROI"] = str(self.use_roi.get()).lower()
+        
+        self.add_log_message(f"🐛 DEBUG: Environment variables set:", "info")
+        self.add_log_message(f"  BOM_PDF_PATH: {os.environ.get('BOM_PDF_PATH')}", "info")
+        self.add_log_message(f"  BOM_PAGE_RANGE: {os.environ.get('BOM_PAGE_RANGE')}", "info")
+        self.add_log_message(f"  BOM_COMPANY: {os.environ.get('BOM_COMPANY')}", "info")
+        self.add_log_message(f"  BOM_USE_ROI: {os.environ.get('BOM_USE_ROI')}", "info")
+        self.add_log_message(f"  BOM_ROI_AREAS: {os.environ.get('BOM_ROI_AREAS', 'NOT SET')}", "info")
 
         # Log the start of pipeline
         self.add_log_message("Starting BoM processing pipeline...", "step")
         self.add_log_message(f"PDF: {Path(pdf).name}", "info")
         self.add_log_message(f"Pages: {pages}", "info")
+        self.add_log_message(f"Table detection mode: {self.tabula_mode.get()}", "info")
+        self.add_log_message(f"Use ROI selection: {self.use_roi.get()}", "info")
         if company:
             self.add_log_message(f"Company: {company}", "info")
         if output_dir:
@@ -768,33 +826,112 @@ Invalid formats:
                 # Update progress for different stages
                 self.start_progress("Processing PDF and extracting tables...")
                 
+                # Enhanced logging for OCR debugging
+                self.add_log_message("Starting PDF table extraction...", "step")
+                
+                # Check OCR availability and log status
+                try:
+                    from pipeline.ocr_preprocessor import check_ocrmypdf_installation, check_tesseract_installation
+                    
+                    ocr_available, ocr_version, ocr_error = check_ocrmypdf_installation()
+                    tesseract_available, tesseract_version, tesseract_error = check_tesseract_installation()
+                    
+                    if ocr_available and tesseract_available:
+                        self.add_log_message(f"OCR available: {ocr_version}, Tesseract: {tesseract_version}", "success")
+                    else:
+                        self.add_log_message("OCR not fully available - some PDFs may fail", "warning")
+                        if not ocr_available:
+                            self.add_log_message(f"OCRmyPDF issue: {ocr_error}", "warning")
+                        if not tesseract_available:
+                            self.add_log_message(f"Tesseract issue: {tesseract_error}", "warning")
+                            
+                except Exception as ocr_check_error:
+                    self.add_log_message(f"Could not check OCR status: {ocr_check_error}", "warning")
+                
+                # Check Camelot availability for ROI fallback
+                try:
+                    import camelot
+                    self.add_log_message("Camelot available for ROI fallback", "success")
+                except ImportError:
+                    self.add_log_message("Camelot not available - install with: pip install camelot-py[cv]", "warning")
+                except Exception as camelot_error:
+                    self.add_log_message(f"Camelot error: {camelot_error}", "warning")
+                
                 # Call the pipeline with GUI review callback
                 from pipeline.main_pipeline import run_main_pipeline_with_gui_review
                 
                 # Create a callback that will be called when review is needed
                 def review_callback(merged_df):
                     print("📝 GUI REVIEW: Review callback called from pipeline")
+                    print(f"📝 GUI REVIEW: Merged DataFrame shape: {merged_df.shape}")
+                    print(f"📝 GUI REVIEW: Merged DataFrame columns: {merged_df.columns.tolist()}")
+                    self.add_log_message("Review callback triggered - showing review window", "step")
+                    
                     # This will be called from the background thread, so we need to
                     # schedule the review window creation on the main thread
                     result_container = [None]
-                    review_done = [False]
+                    review_event = threading.Event()
+                    review_error = [None]
                     
                     def show_review_on_main_thread():
                         try:
+                            print("📝 GUI REVIEW: Creating review window on main thread")
+                            self.add_log_message("Opening review window for table editing", "info")
+                            
+                            # Update progress to show we're waiting for user input
+                            self.update_status("⏳ Waiting for user to review and confirm table...")
+                            
+                            # Show the review window and wait for user input
                             reviewed_df = show_review_window(merged_df, self.root)
-                            result_container[0] = reviewed_df
+                            
+                            if reviewed_df is not None:
+                                result_container[0] = reviewed_df
+                                print(f"📝 GUI REVIEW: Review window completed, result shape: {reviewed_df.shape}")
+                                self.add_log_message("Review window completed - user confirmed table", "success")
+                                self.add_log_message("Proceeding to price lookup...", "step")
+                            else:
+                                print("📝 GUI REVIEW: Review window cancelled or returned None")
+                                self.add_log_message("Review window cancelled", "warning")
+                                result_container[0] = merged_df  # Use original if cancelled
+                                
                         except Exception as e:
                             print(f"📝 GUI REVIEW: Error in review window: {e}")
+                            self.add_log_message(f"Review window error: {e}", "error")
                             result_container[0] = merged_df  # Use original on error
+                            review_error[0] = e
                         finally:
-                            review_done[0] = True
+                            # Signal that review is complete
+                            review_event.set()
                     
                     # Schedule the review window on the main thread
-                    self.root.after(0, show_review_on_main_thread)
+                    print("📝 GUI REVIEW: Scheduling review window on main thread")
+                    try:
+                        self.root.after(0, show_review_on_main_thread)
+                    except RuntimeError as e:
+                        print(f"📝 GUI REVIEW: Could not schedule review window: {e}")
+                        # Try direct call as fallback
+                        try:
+                            show_review_on_main_thread()
+                        except Exception as direct_error:
+                            print(f"📝 GUI REVIEW: Direct call also failed: {direct_error}")
+                            result_container[0] = merged_df
+                            review_event.set()
+                            return result_container[0]
                     
-                    # Wait for the review to complete
-                    while not review_done[0]:
-                        time.sleep(0.1)
+                    # Wait for the review to complete using threading event
+                    print("📝 GUI REVIEW: Waiting for review to complete...")
+                    review_event.wait()
+                    
+                    # Give the GUI a moment to update after the review window closes
+                    self.root.update_idletasks()
+                    
+                    # Check if there was an error
+                    if review_error[0]:
+                        print(f"📝 GUI REVIEW: Review completed with error: {review_error[0]}")
+                        self.add_log_message(f"Review completed with error: {review_error[0]}", "error")
+                    else:
+                        print("📝 GUI REVIEW: Review completed successfully")
+                        self.add_log_message("Review completed - continuing with price lookup", "info")
                     
                     return result_container[0]
                 
@@ -804,7 +941,8 @@ Invalid formats:
                     pages=pages,
                     company=company,
                     output_directory=self.output_directory.get(),
-                    review_callback=review_callback
+                    review_callback=review_callback,
+                    tabula_mode=self.tabula_mode.get()
                 )
                 
                 # Log the result if it contains useful information
@@ -813,7 +951,7 @@ Invalid formats:
                 
                 self.add_log_message("Pipeline process completed successfully!", "success")
                 
-                # Update progress to completion
+                # Update progress to show completion
                 self.start_progress("Pipeline completed successfully!")
                 self.complete_progress()
                 
@@ -848,13 +986,21 @@ Invalid formats:
                 
                 # Schedule the success dialog on the main thread
                 def show_success():
-                    Messagebox.show_info(
-                        "Success", 
-                        success_message,
-                        parent=self.root
-                    )
+                    try:
+                        Messagebox.show_info(
+                            "Success", 
+                            success_message,
+                            parent=self.root
+                        )
+                    except Exception as gui_error:
+                        print(f"[GUI UPDATE] Could not show success dialog: {gui_error}")
+                        print(f"SUCCESS: {success_message}")
                 
-                self.root.after(0, show_success)
+                try:
+                    self.root.after(0, show_success)
+                except RuntimeError as e:
+                    print(f"[GUI UPDATE] Could not schedule success dialog: {e}")
+                    print(f"SUCCESS: {success_message}")
                 
             except Exception as e:
                 # Stop progress on error
@@ -870,35 +1016,43 @@ Invalid formats:
                 
                 # Schedule the error dialog on the main thread
                 def show_error():
-                    if "chromedriver" in error_str or "chrome" in error_str or "browser" in error_str:
-                        # ChromeDriver specific error
-                        CopyableErrorDialog(
-                            self.root,
-                            "ChromeDriver Error",
-                            "The price lookup failed due to a ChromeDriver issue.\n\n" +
-                            "This usually means:\n" +
-                            "• ChromeDriver is not installed or not in the correct location\n" +
-                            "• ChromeDriver version doesn't match your Chrome browser version\n" +
-                            "• Chrome browser is not installed\n" +
-                            "• Antivirus software is blocking ChromeDriver\n\n" +
-                            "The pipeline completed the PDF extraction and table merging steps successfully, " +
-                            "but could not retrieve pricing data from the web.\n\n" +
-                            "To resolve this:\n" +
-                            "1. Ensure Chrome browser is installed and up to date\n" +
-                            "2. Download the matching ChromeDriver from: https://chromedriver.chromium.org/\n" +
-                            "3. Place chromedriver.exe in the application's src folder\n" +
-                            "4. Check that antivirus software isn't blocking the application",
-                            f"Full error details:\n{error_message}"
-                        ).show()
-                    else:
-                        # Generic error dialog
-                        Messagebox.show_error(
-                            "Pipeline Error", 
-                            f"Pipeline failed with error:\n\n{error_message}",
-                            parent=self.root
-                        )
+                    try:
+                        if "chromedriver" in error_str or "chrome" in error_str or "browser" in error_str:
+                            # ChromeDriver specific error
+                            CopyableErrorDialog(
+                                self.root,
+                                "ChromeDriver Error",
+                                "The price lookup failed due to a ChromeDriver issue.\n\n" +
+                                "This usually means:\n" +
+                                "• ChromeDriver is not installed or not in the correct location\n" +
+                                "• ChromeDriver version doesn't match your Chrome browser version\n" +
+                                "• Chrome browser is not installed\n" +
+                                "• Antivirus software is blocking ChromeDriver\n\n" +
+                                "The pipeline completed the PDF extraction and table merging steps successfully, " +
+                                "but could not retrieve pricing data from the web.\n\n" +
+                                "To resolve this:\n" +
+                                "1. Ensure Chrome browser is installed and up to date\n" +
+                                "2. Download the matching ChromeDriver from: https://chromedriver.chromium.org/\n" +
+                                "3. Place chromedriver.exe in the application's src folder\n" +
+                                "4. Check that antivirus software isn't blocking the application",
+                                f"Full error details:\n{error_message}"
+                            ).show()
+                        else:
+                            # Generic error dialog
+                            Messagebox.show_error(
+                                "Pipeline Error", 
+                                f"Pipeline failed with error:\n\n{error_message}",
+                                parent=self.root
+                            )
+                    except Exception as gui_error:
+                        print(f"[GUI UPDATE] Could not show error dialog: {gui_error}")
+                        print(f"ERROR: {error_message}")
                 
-                self.root.after(0, show_error)
+                try:
+                    self.root.after(0, show_error)
+                except RuntimeError as e:
+                    print(f"[GUI UPDATE] Could not schedule error dialog: {e}")
+                    print(f"ERROR: {error_message}")
 
         threading.Thread(target=background_task).start()
 
@@ -981,47 +1135,6 @@ Invalid formats:
             Messagebox.show_warning("System Requirements", warning_text, parent=self.root)
         else:
             self.add_log_message("All system requirements met", "success")
-
-    def test_error_dialog(self):
-        """Test the copyable error dialog (for development/testing)."""
-        self.add_log_message("Testing error dialog functionality", "info")
-        
-        sample_error = """Sample Error for Testing
-
-This is a sample error message to test the copyable error dialog functionality.
-
-Possible solutions:
-• Solution 1: Try this first
-• Solution 2: If that doesn't work, try this
-• Solution 3: As a last resort, try this
-
-This error dialog allows you to copy the error message to share with support or for troubleshooting."""
-
-        sample_technical = """Command: ['python', 'main_pipeline.py']
-Return code: 1
-
-Output:
-Sample output from the failed command
-Multiple lines of output
-With various information
-
-Errors:
-Sample error output
-Error details
-Stack trace information"""
-
-        try:
-            error_dialog = CopyableErrorDialog(
-                self.root,
-                "Test Error Dialog",
-                sample_error,
-                sample_technical
-            )
-            error_dialog.show()
-            self.add_log_message("Error dialog test completed", "success")
-        except Exception as e:
-            self.add_log_message(f"Error dialog test failed: {e}", "error")
-            messagebox.showerror("Error", f"Failed to show error dialog: {e}")
 
 # Review window functionality has been moved to review_window.py
 # Use show_review_window(merged_df, parent_window) from the imported module

@@ -16,23 +16,163 @@ if getattr(sys, 'frozen', False):
 else:
     SCRIPT_DIR = Path(__file__).parent
 
+def run_extract_bom_with_roi_orchestration():
+    """
+    Run BoM extraction with ROI orchestration that handles fallbacks properly.
+    
+    This function provides proper architectural separation where:
+    1. extract_bom_tab.py handles only tabula-specific extraction
+    2. extract_bom_cam.py handles only camelot-specific extraction  
+    3. main_pipeline.py orchestrates the workflow and fallbacks
+    """
+    print("STEP 1: Extracting BoM tables from PDF with ROI orchestration...")
+    pdf_path = os.environ.get("BOM_PDF_PATH")
+    pages = os.environ.get("BOM_PAGE_RANGE")
+    company = os.environ.get("BOM_COMPANY")
+    output_directory = os.environ.get("BOM_OUTPUT_DIRECTORY")
+    tabula_mode = os.environ.get("BOM_TABULA_MODE", "balanced")
+    use_roi = os.environ.get("BOM_USE_ROI", "false").lower() == "true"
+    
+    if not use_roi:
+        # If not using ROI, use the standard extraction
+        return run_extract_bom()
+    
+    print("📍 Using ROI-based extraction with orchestration...")
+    
+    # Step 1: Try tabula-only ROI extraction
+    print("📊 STEP 1: Attempting tabula ROI extraction...")
+    env = os.environ.copy()
+    env["BOM_PDF_PATH"] = str(pdf_path or "")
+    env["BOM_PAGE_RANGE"] = str(pages or "")
+    env["BOM_COMPANY"] = str(company or "")
+    env["BOM_OUTPUT_DIRECTORY"] = str(output_directory or "")
+    env["BOM_TABULA_MODE"] = str(tabula_mode)
+    env["BOM_USE_ROI"] = "true"
+    
+    command = [sys.executable, str(SCRIPT_DIR / "extract_bom_tab.py")]
+    
+    print(f"Running tabula ROI extraction: {' '.join(command)}")
+    
+    try:
+        # Add timeout to prevent hanging
+        result = subprocess.run(command, env=env, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=300)
+    except subprocess.TimeoutExpired:
+        print("❌ STEP 1 TIMEOUT: Tabula ROI extraction timed out after 5 minutes")
+        result = subprocess.CompletedProcess(command, 1, "", "Process timed out")
+    except Exception as e:
+        print(f"❌ STEP 1 ERROR: Subprocess failed: {e}")
+        result = subprocess.CompletedProcess(command, 1, "", str(e))
+    
+    print(result.stdout)
+    
+    # Check if tabula ROI extraction was successful
+    pdf_dir = Path(pdf_path).parent
+    pdf_name = Path(pdf_path).stem
+    merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
+    
+    if result.returncode == 0 and merged_path.exists():
+        print("✅ STEP 1 SUCCESS: Tabula ROI extraction completed")
+        return merged_path
+    
+    print("❌ STEP 1 FAIL: Tabula ROI extraction failed")
+    
+    # Step 2: Try camelot ROI extraction as fallback
+    print("📊 STEP 2: Attempting camelot ROI extraction fallback...")
+    
+    # Check if ROI areas are available
+    roi_areas = os.environ.get("BOM_ROI_AREAS")
+    if not roi_areas:
+        print("❌ STEP 2 FAIL: No ROI areas available for camelot fallback")
+        raise subprocess.CalledProcessError(1, command, output=result.stdout, stderr=result.stderr)
+    
+    try:
+        import json
+        from pipeline.extract_bom_cam import extract_tables_with_camelot_roi
+        from pipeline.extract_main import merge_tables_and_export
+        
+        roi_areas = json.loads(roi_areas)
+        all_tables = []
+        
+        for page_num, area in roi_areas.items():
+            print(f"📊 Extracting from page {page_num} using Camelot...")
+            
+            try:
+                # Convert single ROI area to list format expected by extract_tables_with_camelot_roi
+                roi_area_list = [area]  # Function expects a list of ROI areas
+                
+                print(f"🎯 Using ROI area: {area}")
+                
+                # Use camelot ROI extraction function
+                camelot_tables = extract_tables_with_camelot_roi(pdf_path, str(page_num), roi_areas=roi_area_list)
+                
+                if camelot_tables:
+                    for i, table in enumerate(camelot_tables):
+                        if not table.empty and table.shape[0] >= 1 and table.shape[1] >= 1:
+                            print(f"    ✅ Extracted table {i+1}: {table.shape[0]}×{table.shape[1]} (Camelot ROI)")
+                            all_tables.append(table)
+                        else:
+                            print(f"    ❌ Camelot table {i+1} too small or empty: {table.shape[0]}×{table.shape[1]}")
+                else:
+                    print(f"    ❌ No Camelot tables from page {page_num}")
+                    
+            except Exception as e:
+                print(f"    ❌ Camelot extraction failed for page {page_num}: {e}")
+                continue
+        
+        if all_tables:
+            print(f"✅ STEP 2 SUCCESS: Camelot ROI extraction found {len(all_tables)} tables")
+            
+            # Always show table selection interface for debugging, even with single table
+            print("📋 Tables found - showing selection interface...")
+            from gui.table_selector import show_table_selector
+            selected_tables = show_table_selector(all_tables)
+            
+            if not selected_tables:
+                print("❌ No tables selected by user")
+                raise subprocess.CalledProcessError(1, command, output="", stderr="No tables selected by user")
+            
+            print(f"📋 User selected {len(selected_tables)} tables")
+            
+            # Save the selected tables using the same logic as extract_bom_tab
+            success = merge_tables_and_export(selected_tables, str(merged_path), "Combined_BoM", company)
+            
+            if success:
+                print(f"✅ Camelot ROI extraction completed successfully!")
+                return merged_path
+            else:
+                print("❌ Failed to save merged tables from camelot")
+                raise subprocess.CalledProcessError(1, command, output="", stderr="Failed to save merged tables")
+        else:
+            print("❌ STEP 2 FAIL: Camelot ROI extraction found no tables")
+            raise subprocess.CalledProcessError(1, command, output=result.stdout, stderr=result.stderr)
+            
+    except Exception as e:
+        print(f"❌ STEP 2 ERROR: Camelot ROI orchestration failed: {e}")
+        raise subprocess.CalledProcessError(1, command, output=result.stdout, stderr=str(e))
+
 def run_extract_bom():
     print("STEP 1: Extracting BoM tables from PDF...")
     pdf_path = os.environ.get("BOM_PDF_PATH")
     pages = os.environ.get("BOM_PAGE_RANGE")
     company = os.environ.get("BOM_COMPANY")
     output_directory = os.environ.get("BOM_OUTPUT_DIRECTORY")
+    tabula_mode = os.environ.get("BOM_TABULA_MODE", "balanced")
+    use_roi = os.environ.get("BOM_USE_ROI", "false")
 
     env = os.environ.copy()
     env["BOM_PDF_PATH"] = str(pdf_path or "")
     env["BOM_PAGE_RANGE"] = str(pages or "")
     env["BOM_COMPANY"] = str(company or "")
     env["BOM_OUTPUT_DIRECTORY"] = str(output_directory or "")
+    env["BOM_TABULA_MODE"] = str(tabula_mode)
+    env["BOM_USE_ROI"] = str(use_roi)
 
     command = [sys.executable, str(SCRIPT_DIR / "extract_bom_tab.py")]
     
     print(f"Running command: {' '.join(command)}")
-    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    print(f"Tabula mode: {tabula_mode}")
+    print(f"Use ROI: {use_roi}")
+    result = subprocess.run(command, env=env, capture_output=True, text=True, encoding='utf-8', errors='ignore')
     
     print(result.stdout)
     if result.returncode != 0:
@@ -56,7 +196,7 @@ def run_price_lookup(merged_path):
     command = [sys.executable, str(SCRIPT_DIR / "lookup_price.py")]
     
     print(f"Running command: {' '.join(command)}")
-    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    result = subprocess.run(command, env=env, capture_output=True, text=True, encoding='utf-8', errors='ignore')
     
     print(result.stdout)
     if result.returncode != 0:
@@ -80,7 +220,7 @@ def run_cost_sheet_mapping(prices_path, merged_path):
     command = [sys.executable, str(SCRIPT_DIR / "map_cost_sheet.py")]
     
     print(f"Running command: {' '.join(command)}")
-    result = subprocess.run(command, env=env, capture_output=True, text=True)
+    result = subprocess.run(command, env=env, capture_output=True, text=True, encoding='utf-8', errors='ignore')
     
     print(result.stdout)
     if result.returncode != 0:
@@ -159,10 +299,17 @@ def main():
         print(f"\nERROR: Pipeline failed with unexpected error:\n{error_msg}")
         sys.exit(1)
 
-def run_main_pipeline_direct(pdf_path, pages, company, output_directory):
+def run_main_pipeline_direct(pdf_path, pages, company, output_directory, tabula_mode="balanced"):
     """
     Direct function call version of the main pipeline for PyInstaller compatibility.
     Sets environment variables and calls the main pipeline functions directly.
+    
+    Args:
+        pdf_path (str): Path to the PDF file
+        pages (str): Pages to extract from
+        company (str): Company name for custom formatting
+        output_directory (str): Output directory for results
+        tabula_mode (str): Tabula extraction mode - 'conservative', 'balanced', or 'aggressive'
     """
     # Import the main functions from other modules
     from pipeline.extract_bom_tab import main as extract_main
@@ -174,6 +321,46 @@ def run_main_pipeline_direct(pdf_path, pages, company, output_directory):
     os.environ["BOM_PAGE_RANGE"] = str(pages)
     os.environ["BOM_COMPANY"] = str(company)
     os.environ["BOM_OUTPUT_DIRECTORY"] = str(output_directory)
+    os.environ["BOM_TABULA_MODE"] = str(tabula_mode)
+    
+    # Check if this customer requires forced OCR preprocessing
+    from omni_cust.customer_config import CUSTOMER_SETTINGS
+    customer_key = company.lower().replace(" ", "_").replace("-", "_") if company else "generic"
+    customer_settings = CUSTOMER_SETTINGS.get(customer_key, {})
+    force_ocr = customer_settings.get("force_ocr", False)
+    
+    processed_pdf_path = pdf_path
+    if force_ocr:
+        print(f"🔍 SPECIAL CASE: Customer {company} requires forced OCR preprocessing")
+        try:
+            from pipeline.ocr_preprocessor import preprocess_pdf_with_ocr
+            
+            # Create OCR processed version of the PDF
+            pdf_dir = Path(pdf_path).parent
+            pdf_name = Path(pdf_path).stem
+            ocr_pdf_path = pdf_dir / f"{pdf_name}_ocr.pdf"
+            
+            print(f"🔍 OCR: Processing {pdf_path} -> {ocr_pdf_path}")
+            success, processed_path, error_msg = preprocess_pdf_with_ocr(
+                pdf_path=pdf_path,
+                output_path=str(ocr_pdf_path),
+                force_ocr=True
+            )
+            
+            if success and processed_path and Path(processed_path).exists():
+                processed_pdf_path = processed_path
+                print(f"✅ OCR: Successfully processed PDF, using {processed_pdf_path}")
+                
+                # Update the environment variable to use the OCR-processed PDF
+                os.environ["BOM_PDF_PATH"] = str(processed_pdf_path)
+            else:
+                print(f"⚠️ OCR: Failed to process PDF, using original {pdf_path}")
+                if error_msg:
+                    print(f"⚠️ OCR: Error details: {error_msg}")
+                
+        except Exception as e:
+            print(f"❌ OCR: Error during preprocessing: {e}")
+            print(f"⚠️ OCR: Continuing with original PDF {pdf_path}")
     
     try:
         print("=== BoMination Pipeline Starting ===")
@@ -181,19 +368,30 @@ def run_main_pipeline_direct(pdf_path, pages, company, output_directory):
         print(f"Pages: {pages}")
         print(f"Company: {company}")
         print(f"Output: {output_directory}")
+        print(f"Tabula mode: {tabula_mode}")
         print()
         
-        # Step 1: Extract BoM tables
+        # Step 1: Extract BoM tables using appropriate method
         print("STEP 1: Extracting BoM tables from PDF...")
-        extract_main()
+        
+        # Check if ROI is enabled to use orchestration
+        use_roi = os.environ.get("BOM_USE_ROI", "false").lower() == "true"
+        
+        if use_roi:
+            print("🎯 Using ROI-based extraction with orchestration...")
+            merged_path = run_extract_bom_with_roi_orchestration()
+        else:
+            print("🔄 Using standard extraction workflow...")
+            merged_path = run_extract_bom()
+            
         print("✓ BoM extraction completed")
         
-        # Generate the expected merged file path after extraction
-        # IMPORTANT: Always look for merged files in PDF directory, not output directory
-        # The extraction process saves files to PDF directory regardless of output_directory setting
-        pdf_dir = Path(pdf_path).parent
-        pdf_name = Path(pdf_path).stem
-        merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
+        # Verify the merged file exists
+        if not merged_path.exists():
+            print(f"❌ ERROR: Expected merged file not found: {merged_path}")
+            raise FileNotFoundError(f"Merged file not found: {merged_path}")
+        
+        print(f"✅ Merged file found: {merged_path}")
         
         print(f"Looking for merged file in PDF directory: {merged_path}")
         print(f"(Output directory setting: {output_directory or 'None - using PDF directory'})")
@@ -278,13 +476,22 @@ def run_main_pipeline_direct(pdf_path, pages, company, output_directory):
         print(f"\nERROR: Pipeline failed:\n{error_msg}")
         raise
 
-def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory, review_callback=None):
+def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory, review_callback=None, tabula_mode="balanced"):
     """
     Direct function call version of the main pipeline with GUI review callback.
     The review_callback function will be called when the merged table is ready for review.
+    
+    Args:
+        pdf_path (str): Path to the PDF file
+        pages (str): Pages to extract from
+        company (str): Company name for custom formatting
+        output_directory (str): Output directory for results
+        review_callback (callable): Function to call for GUI review
+        tabula_mode (str): Tabula extraction mode - 'conservative', 'balanced', or 'aggressive'
     """
     # Import the main functions from other modules
-    from pipeline.extract_bom_tab import main as extract_main, merge_tables_and_export
+    from pipeline.extract_main import run_main_extraction_workflow
+    from pipeline.extract_main import merge_tables_and_export
     from pipeline.lookup_price import main as lookup_main  
     from pipeline.map_cost_sheet import main as map_main
     
@@ -293,9 +500,54 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
     os.environ["BOM_PAGE_RANGE"] = str(pages)
     os.environ["BOM_COMPANY"] = str(company)
     os.environ["BOM_OUTPUT_DIRECTORY"] = str(output_directory)
+    os.environ["BOM_TABULA_MODE"] = str(tabula_mode)
     
-    # Skip review in extract_bom_tab.py since we'll handle it in the GUI
+    # Set BOM_SKIP_REVIEW to prevent double review windows
+    # The GUI review callback will handle the review instead
     os.environ["BOM_SKIP_REVIEW"] = "true"
+    
+    print(f"🚀 PIPELINE: Starting pipeline with GUI review for {company}")
+    print(f"🚀 PIPELINE: Review callback provided: {review_callback is not None}")
+    print(f"🚀 PIPELINE: BOM_SKIP_REVIEW set to prevent double review")
+    
+    # Check if this customer requires forced OCR preprocessing
+    from omni_cust.customer_config import CUSTOMER_SETTINGS
+    customer_key = company.lower().replace(" ", "_").replace("-", "_") if company else "generic"
+    customer_settings = CUSTOMER_SETTINGS.get(customer_key, {})
+    force_ocr = customer_settings.get("force_ocr", False)
+    
+    processed_pdf_path = pdf_path
+    if force_ocr:
+        print(f"🔍 SPECIAL CASE: Customer {company} requires forced OCR preprocessing")
+        try:
+            from pipeline.ocr_preprocessor import preprocess_pdf_with_ocr
+            
+            # Create OCR processed version of the PDF
+            pdf_dir = Path(pdf_path).parent
+            pdf_name = Path(pdf_path).stem
+            ocr_pdf_path = pdf_dir / f"{pdf_name}_ocr.pdf"
+            
+            print(f"🔍 OCR: Processing {pdf_path} -> {ocr_pdf_path}")
+            success, processed_path, error_msg = preprocess_pdf_with_ocr(
+                pdf_path=pdf_path,
+                output_path=str(ocr_pdf_path),
+                force_ocr=True
+            )
+            
+            if success and processed_path and Path(processed_path).exists():
+                processed_pdf_path = processed_path
+                print(f"✅ OCR: Successfully processed PDF, using {processed_pdf_path}")
+                
+                # Update the environment variable to use the OCR-processed PDF
+                os.environ["BOM_PDF_PATH"] = str(processed_pdf_path)
+            else:
+                print(f"⚠️ OCR: Failed to process PDF, using original {pdf_path}")
+                if error_msg:
+                    print(f"⚠️ OCR: Error details: {error_msg}")
+                
+        except Exception as e:
+            print(f"❌ OCR: Error during preprocessing: {e}")
+            print(f"⚠️ OCR: Continuing with original PDF {pdf_path}")
     
     try:
         print("=== BoMination Pipeline Starting (GUI Review Mode) ===")
@@ -307,13 +559,25 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
         
         # Step 1: Extract BoM tables
         print("STEP 1: Extracting BoM tables from PDF...")
-        extract_main()
+        
+        # Check if ROI is enabled to use orchestration
+        use_roi = os.environ.get("BOM_USE_ROI", "false").lower() == "true"
+        
+        if use_roi:
+            print("🎯 Using ROI-based extraction with orchestration...")
+            # ROI orchestration returns the merged path directly
+            merged_path = run_extract_bom_with_roi_orchestration()
+        else:
+            print("🔄 Using standard extraction workflow...")
+            run_main_extraction_workflow()
+        
         print("✓ BoM extraction completed")
         
-        # Generate the expected merged file path after extraction
-        pdf_dir = Path(pdf_path).parent
-        pdf_name = Path(pdf_path).stem
-        merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
+        # Generate the expected merged file path after extraction (if not using ROI)
+        if not use_roi:
+            pdf_dir = Path(pdf_path).parent
+            pdf_name = Path(pdf_path).stem
+            merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
         
         print(f"Looking for merged file: {merged_path}")
         
@@ -329,7 +593,9 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
             
             # Call the review callback with the merged data
             print("Calling GUI review callback...")
+            print(f"About to call review callback with dataframe shape: {merged_df.shape}")
             reviewed_df = review_callback(merged_df)
+            print(f"Review callback completed, returned dataframe shape: {reviewed_df.shape if reviewed_df is not None else 'None'}")
             
             # Save the reviewed data back to the file
             if reviewed_df is not None:
@@ -341,6 +607,10 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
                 print("✓ Reviewed data saved with N/A filling")
             else:
                 print("No changes made during review")
+            
+            print("Review process completed, proceeding to price lookup...")
+        else:
+            print("No review callback provided, skipping review step")
         
         # Continue with the rest of the pipeline
         print("\nSTEP 2: Looking up part prices...")

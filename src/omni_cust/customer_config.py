@@ -9,6 +9,10 @@ CUSTOMER_DISPLAY_NAMES = {
     "farrell": "Farrell",
     "nel": "NEL",
     "primetals": "Primetals",
+    "riley_power": "Riley Power",
+    "shanklin": "Shanklin",
+    "901d": "901D",
+    "amazon": "Amazon",
     "generic": "Generic/Other"
 }
 
@@ -18,6 +22,10 @@ AUTO_DETECTION_KEYWORDS = {
     "nel": ["NEL HYDROGEN", "PROTON ENERGY", "PROTON P/N"],
     "farrell": ["FARRELL"],
     "primetals": ["PRIMETALS", "PRIMETALS TECHNOLOGIES"],
+    "riley_power": ["RILEY POWER", "RILEY TRANSMISSION"],
+    "shanklin": ["SHANKLIN", "SHANKLIN CORPORATION"],
+    "901d": ["901D", "901-D"],
+    "amazon": ["AMAZON", "DEVICE TAG", "LIFECYCLE", "PRODUCTIO"],
     # Add more customers here as needed
 }
 
@@ -37,6 +45,26 @@ CUSTOMER_SETTINGS = {
         "split_dual_column": True,
         "header_keywords": ["ITEM", "MFG", "MFGPART", "DESCRIPTION", "QTY"],
         "reject_keywords": ["PRIMETALS TECHNOLOGIES", "CONFIDENTIAL", "PROPRIETARY"]
+    },
+    "riley_power": {
+        "merge_split_descriptions": True,
+        "header_keywords": ["ITEM", "QTY", "MANUFACTURER", "MODEL NO", "ITEM DES", "RIPTION"],
+        "reject_keywords": ["PROPRIETARY", "CONFIDENTIAL"]
+    },
+    "shanklin": {
+        "reverse_row_order": True,
+        "header_at_bottom": True,
+        "header_keywords": ["ITEM", "PART", "NUMBER", "DESCRIPTION", "SPC"],
+        "reject_keywords": []
+    },
+    "901d": {
+        "force_ocr": True,  # Special case: Always force OCR preprocessing for 901D
+        "header_keywords": ["ITEM", "QTY", "PART", "DESCRIPTION", "MANUFACTURER"],
+        "reject_keywords": []
+    },
+    "amazon": {
+        "header_keywords": ["DEVICE TAG", "QTY", "MANUFACTURER", "PART NUMBER", "DESCRIPTION", "UL CAT", "CSA"],
+        "reject_keywords": ["REVISION", "RELEASED", "LIFECYCLE", "DESIGNED BY", "CHECKED BY", "APPROVED BY"]
     },
     "generic": {
         "header_keywords": ["ITEM", "QTY", "PART", "DESCRIPTION", "MANUFACTURER"]

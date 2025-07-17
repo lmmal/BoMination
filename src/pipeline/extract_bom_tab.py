@@ -1,1079 +1,623 @@
-import tabula
-import pandas as pd
+"""
+Tabula-specific table extraction module for BoMination.
+Handles table extraction from PDFs using the tabula-py library.
+"""
+
 import os
 import sys
-import re
-import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox
-from pathlib import Path
-from pipeline.validation_utils import validate_extracted_tables, handle_common_errors, generate_output_path
-from omni_cust.customer_formatters import apply_customer_formatter, get_available_customers
-from gui.table_selector import show_table_selector
-from gui.review_window import review_and_edit_dataframe_cli
 import logging
-from pandastable import Table
-import tempfile
+from pathlib import Path
+import traceback
+import pandas as pd
 
-# Configure matplotlib to use non-interactive backend to avoid GUI issues
-try:
-    import matplotlib
-    matplotlib.use('Agg')
-except ImportError:
-    pass  # matplotlib not available
+# Configure encoding for Windows compatibility
+os.environ['PYTHONIOENCODING'] = 'utf-8:ignore'
 
-# Import OCR preprocessing module
-from pipeline.ocr_preprocessor import (
-    preprocess_pdf_with_ocr, 
-    cleanup_ocr_temp_files,
-    check_ocrmypdf_installation,
-    get_ocr_installation_instructions
-)
+# Add the src directory to Python path so we can import modules
+src_dir = Path(__file__).parent.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
-# Configure logging to suppress verbose third-party output
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-logging.getLogger('selenium').setLevel(logging.WARNING)
-logging.getLogger('urllib3').setLevel(logging.WARNING)
-logging.getLogger('requests').setLevel(logging.WARNING)
-
-# Configure Tabula for PyInstaller
-if getattr(sys, 'frozen', False):
-    # Running as PyInstaller executable
-    import tempfile
-    # Set java encoding to handle special characters
-    os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8'
-    # Set a reasonable temp directory for Tabula
-    os.environ['TMPDIR'] = tempfile.gettempdir()
-
-def is_likely_bom_table(df):
-    """
-    Determine if a dataframe looks like a Bill of Materials table.
-    Returns True if it looks like a BOM, False otherwise.
-    """
-    if df.empty or df.shape[0] < 3 or df.shape[1] < 3:
-        return False
-    
-    # Convert to string for analysis
-    df_str = df.astype(str)
-    
-    # Look for common BOM indicators
-    bom_keywords = [
-        'ITEM', 'QTY', 'QUANTITY', 'PART', 'NUMBER', 'DESCRIPTION', 'DESC', 
-        'MFG', 'MANUFACTURER', 'MPN', 'P/N', 'PART NUMBER', 'ITEM NO',
-        'BILL OF MATERIAL', 'BOM', 'COMPONENT', 'REFERENCE', 'REF'
-    ]
-    
-    # Check headers (first few rows)
-    header_score = 0
-    for i in range(min(3, len(df_str))):
-        row_text = ' '.join(df_str.iloc[i].astype(str)).upper()
-        for keyword in bom_keywords:
-            if keyword in row_text:
-                header_score += 1
-    
-    # Check for structured data patterns
-    structure_score = 0
-    
-    # Look for numeric patterns (item numbers, quantities)
-    numeric_cols = 0
-    for col in df.columns:
-        col_data = df[col].astype(str).str.strip()
-        numeric_count = sum(1 for val in col_data if val.isdigit() or val.replace('.', '').isdigit())
-        if numeric_count > len(col_data) * 0.3:  # 30% of column is numeric
-            numeric_cols += 1
-    
-    if numeric_cols >= 1:
-        structure_score += 2
-    
-    # Check for consistent row structure (most rows have similar number of filled cells)
-    filled_counts = []
-    for i in range(len(df)):
-        filled_count = sum(1 for val in df.iloc[i].astype(str) if val.strip() != '')
-        filled_counts.append(filled_count)
-    
-    if len(filled_counts) > 0:
-        avg_filled = sum(filled_counts) / len(filled_counts)
-        consistent_rows = sum(1 for count in filled_counts if abs(count - avg_filled) <= 2)
-        if consistent_rows > len(filled_counts) * 0.7:  # 70% of rows are consistent
-            structure_score += 1
-    
-    # Check for strong positive BOM indicators
-    all_text = ' '.join(df_str.fillna('').astype(str).values.flatten()).upper()
-    
-    # Strong positive indicators that this contains BOM data
-    strong_bom_indicators = [
-        'BILL OF MATERIAL', 'ITEM NO', 'MFG P/N', 'PROTON P/N', 'ALPHA WIRE',
-        'HEYCO', 'SIEMENS', 'DELPHI', 'THOMAS BETTS', 'ALTECH', 'MURR'
-    ]
-    
-    strong_positive_score = sum(1 for indicator in strong_bom_indicators if indicator in all_text)
-    
-    # Reject tables that are clearly not BOMs (but only if they don't have strong BOM indicators)
-    reject_keywords = [
-        'PRINTED DRAWING', 'REFERENCE ONLY', 'DOCUMENT CONTROL', 'LATEST REVISION',
-        'PROPERTY OF', 'DELIVERED ON', 'EXPRESS CONDITION', 'NOT TO BE DISCLOSED',
-        'CUT BACK', 'REMOVE', 'SHRINK TUBING', 'DRAWING NUMBER', 'HARNESS'
-    ]
-    
-    reject_score = sum(1 for keyword in reject_keywords if keyword in all_text)
-    
-    # Decision logic - if we have strong BOM indicators, be more lenient about reject keywords
-    if strong_positive_score >= 3:
-        # This definitely contains BOM data, even if it has drawing instructions mixed in
-        total_score = header_score + structure_score + strong_positive_score - min(reject_score, 5) # Cap reject penalty
-        min_threshold = 5  # Lower threshold when we have strong BOM indicators
-    else:
-        # Standard scoring for tables without strong BOM indicators
-        total_score = header_score + structure_score - reject_score
-        min_threshold = 2
-    
-    print(f"    BOM Analysis - Header score: {header_score}, Structure score: {structure_score}, Strong BOM score: {strong_positive_score}, Reject score: {reject_score}, Total: {total_score}, Threshold: {min_threshold}")
-    
-    # Accept if we meet the threshold
-    return total_score >= min_threshold
-
-def detect_pdf_type(pdf_path):
-    """
-    Detect if a PDF is primarily image-based or text-based.
-    Returns 'text' if PDF has searchable text, 'image' if it's primarily image-based.
-    """
-    try:
-        from pipeline.ocr_preprocessor import is_pdf_searchable
-        
-        print(f"🔍 Analyzing PDF type: {Path(pdf_path).name}")
-        
-        is_searchable = is_pdf_searchable(pdf_path)
-        
-        if is_searchable:
-            print("� PDF appears to be text-based (has searchable text)")
-            return 'text'
-        else:
-            print("🖼️ PDF appears to be image-based (no searchable text)")
-            return 'image'
-            
-    except Exception as e:
-        print(f"⚠️ Could not determine PDF type: {e}")
-        print("📄 Assuming text-based PDF")
-        return 'text'
-
-def extract_tables_with_tabula_method(pdf_path, pages):
-    """
-    Extract tables using Tabula-py with multiple fallback methods.
-    Works best with text-based PDFs.
-    """
-    print("📊 Attempting table extraction with Tabula...")
-    
-    # Set environment variables to handle encoding issues
+# Tabula-specific extraction functions
+def configure_tabula_environment():
+    """Configure environment variables for tabula to handle encoding issues."""
     original_java_options = os.environ.get('JAVA_TOOL_OPTIONS', '')
     original_lang = os.environ.get('LANG', '')
     original_lc_all = os.environ.get('LC_ALL', '')
     
-    try:
-        # Set environment to handle subprocess encoding issues
-        os.environ['PYTHONIOENCODING'] = 'utf-8:ignore'
-        os.environ['LANG'] = 'C.UTF-8'
-        os.environ['LC_ALL'] = 'C.UTF-8'
+    # Set environment to handle subprocess encoding issues
+    os.environ['PYTHONIOENCODING'] = 'utf-8:ignore'
+    os.environ['LANG'] = 'C.UTF-8'
+    os.environ['LC_ALL'] = 'C.UTF-8'
+    os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true'
+    
+    return original_java_options, original_lang, original_lc_all
+
+def restore_tabula_environment(original_java_options, original_lang, original_lc_all):
+    """Restore original environment variables after tabula execution."""
+    # Restore original environment variables
+    if original_java_options:
+        os.environ['JAVA_TOOL_OPTIONS'] = original_java_options
+    elif 'JAVA_TOOL_OPTIONS' in os.environ:
+        del os.environ['JAVA_TOOL_OPTIONS']
         
+    if original_lang:
+        os.environ['LANG'] = original_lang
+    elif 'LANG' in os.environ:
+        del os.environ['LANG']
+        
+    if original_lc_all:
+        os.environ['LC_ALL'] = original_lc_all
+    elif 'LC_ALL' in os.environ:
+        del os.environ['LC_ALL']
+        
+    if 'PYTHONIOENCODING' in os.environ:
+        del os.environ['PYTHONIOENCODING']
+
+
+def extract_tables_with_tabula_method_impl(pdf_path, pages):
+    """
+    Extract tables using Tabula-py with optimized settings.
+    Works best with text-based PDFs.
+    
+    Args:
+        pdf_path (str): Path to the PDF file
+        pages (str): Page range to extract from (e.g., "1-3" or "all")
+        
+    Returns:
+        list: List of extracted DataFrames
+    """
+    print("📊 Attempting table extraction with Tabula...")
+    
+    try:
+        import tabula
+        print(f"📊 Tabula version: {tabula.__version__}")
+    except ImportError:
+        print("❌ Tabula not available - install with: pip install tabula-py")
+        return []
+    
+    # Configure environment
+    original_java_options, original_lang, original_lc_all = configure_tabula_environment()
+    
+    try:
         tables = []
         
-        # Method 1: Try lattice method with UTF-8 encoding
+        # Method 1: Lattice detection (most reliable for structured tables)
+        print("📊 Trying lattice detection...")
         try:
-            print("  Trying lattice method with UTF-8 encoding...")
-            os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US'
-            
-            tables = tabula.read_pdf(
+            lattice_tables = tabula.read_pdf(
                 pdf_path,
                 pages=pages,
                 multiple_tables=True,
                 lattice=True,
+                guess=False,
+                stream=False,
                 java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
                 pandas_options={'header': None}
             )
-            print(f"    ✅ Lattice method extracted {len(tables)} tables")
+            
+            if lattice_tables:
+                print(f"    ✅ Lattice method found {len(lattice_tables)} tables")
+                for i, table in enumerate(lattice_tables):
+                    if not table.empty and table.shape[0] >= 3 and table.shape[1] >= 3:
+                        print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} (lattice)")
+                        tables.append(table)
+                    else:
+                        print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} - too small (lattice)")
+            else:
+                print("    ❌ Lattice method found no tables")
+                
         except Exception as e:
             print(f"    ❌ Lattice method failed: {e}")
-            
-            # Method 2: Try with different encoding
+        
+        # Method 2: Stream detection (good for tables without clear borders)
+        if not tables:
+            print("📊 Trying stream detection...")
             try:
-                print("  Trying lattice method with ISO-8859-1 encoding...")
-                os.environ['PYTHONIOENCODING'] = 'latin1:ignore'
-                tables = tabula.read_pdf(
+                stream_tables = tabula.read_pdf(
+                    pdf_path,
+                    pages=pages,
+                    multiple_tables=True,
+                    lattice=False,
+                    stream=True,
+                    guess=False,
+                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                    pandas_options={'header': None}
+                )
+                
+                if stream_tables:
+                    print(f"    ✅ Stream method found {len(stream_tables)} tables")
+                    for i, table in enumerate(stream_tables):
+                        if not table.empty and table.shape[0] >= 3 and table.shape[1] >= 3:
+                            print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} (stream)")
+                            tables.append(table)
+                        else:
+                            print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} - too small (stream)")
+                else:
+                    print("    ❌ Stream method found no tables")
+                    
+            except Exception as e:
+                print(f"    ❌ Stream method failed: {e}")
+        
+        # Method 3: Auto-detection with guess=True (most permissive)
+        if not tables:
+            print("📊 Trying auto-detection...")
+            try:
+                auto_tables = tabula.read_pdf(
                     pdf_path,
                     pages=pages,
                     multiple_tables=True,
                     lattice=True,
-                    java_options="-Dfile.encoding=ISO-8859-1 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                    stream=False,
+                    guess=True,
+                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
                     pandas_options={'header': None}
                 )
-                print(f"    ✅ Lattice method with ISO encoding extracted {len(tables)} tables")
-            except Exception as e2:
-                print(f"    ❌ Lattice method with ISO encoding failed: {e2}")
                 
-                # Method 3: Try stream method as final fallback
-                try:
-                    print("  Trying stream method as final fallback...")
-                    os.environ['PYTHONIOENCODING'] = 'utf-8:ignore'
-                    tables = tabula.read_pdf(
-                        pdf_path,
-                        pages=pages,
-                        multiple_tables=True,
-                        stream=True,
-                        guess=True
-                    )
-                    print(f"    ✅ Stream method extracted {len(tables)} tables")
-                except Exception as e3:
-                    print(f"    ❌ Stream method failed: {e3}")
-                    tables = []
+                if auto_tables:
+                    print(f"    ✅ Auto-detection found {len(auto_tables)} tables")
+                    for i, table in enumerate(auto_tables):
+                        if not table.empty and table.shape[0] >= 3 and table.shape[1] >= 3:
+                            print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} (auto)")
+                            tables.append(table)
+                        else:
+                            print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} - too small (auto)")
+                else:
+                    print("    ❌ Auto-detection found no tables")
+                    
+            except Exception as e:
+                print(f"    ❌ Auto-detection failed: {e}")
+        
+        # Method 4: Last resort - very permissive settings
+        if not tables:
+            print("📊 Trying last resort extraction...")
+            try:
+                last_resort_tables = tabula.read_pdf(
+                    pdf_path,
+                    pages=pages,
+                    multiple_tables=True,
+                    lattice=True,
+                    stream=True,
+                    guess=True,
+                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                    pandas_options={'header': None}
+                )
+                
+                if last_resort_tables:
+                    print(f"    ✅ Last resort found {len(last_resort_tables)} tables")
+                    for i, table in enumerate(last_resort_tables):
+                        if not table.empty and table.shape[0] >= 2 and table.shape[1] >= 2:  # Lower threshold
+                            print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} (last resort)")
+                            tables.append(table)
+                        else:
+                            print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} - too small (last resort)")
+                else:
+                    print("    ❌ Last resort found no tables")
+                    
+            except Exception as e:
+                print(f"    ❌ Last resort failed: {e}")
+        
+        print(f"📊 Tabula extraction completed: {len(tables)} tables found")
+        
+        # Show summary of extracted tables
+        if tables:
+            print("📋 Tabula extraction summary:")
+            for i, table in enumerate(tables):
+                non_empty_cells = table.notna().sum().sum()
+                total_cells = table.shape[0] * table.shape[1]
+                density = non_empty_cells / total_cells if total_cells > 0 else 0
+                print(f"    Table {i+1}: {table.shape[0]}×{table.shape[1]} (density: {density:.2f})")
+                
+                # Show sample content
+                sample_text = ' '.join(table.fillna('').astype(str).values.flatten()[:10])
+                print(f"    Sample: {sample_text[:100]}...")
         
         return tables
+        
+    except Exception as e:
+        print(f"❌ Tabula extraction failed: {e}")
+        print(f"🔍 Error type: {type(e).__name__}")
+        traceback.print_exc()
+        return []
         
     finally:
         # Restore original environment variables
-        if original_java_options:
-            os.environ['JAVA_TOOL_OPTIONS'] = original_java_options
-        elif 'JAVA_TOOL_OPTIONS' in os.environ:
-            del os.environ['JAVA_TOOL_OPTIONS']
-            
-        if original_lang:
-            os.environ['LANG'] = original_lang
-        elif 'LANG' in os.environ:
-            del os.environ['LANG']
-            
-        if original_lc_all:
-            os.environ['LC_ALL'] = original_lc_all
-        elif 'LC_ALL' in os.environ:
-            del os.environ['LC_ALL']
-            
-        if 'PYTHONIOENCODING' in os.environ:
-            del os.environ['PYTHONIOENCODING']
+        restore_tabula_environment(original_java_options, original_lang, original_lc_all)
 
-def extract_tables_with_camelot_method(pdf_path, pages):
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
+# Configure Tabula for PyInstaller
+if getattr(sys, 'frozen', False):
+    # Set Java options for PyInstaller
+    os.environ['JAVA_TOOL_OPTIONS'] = '-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true'
+
+# Import customer formatting
+from omni_cust.customer_formatters import apply_customer_formatter, get_available_customers
+
+# Import validation utilities
+from pipeline.validation_utils import validate_extracted_tables, handle_common_errors, generate_output_path
+
+def check_roi_text_content(pdf_path, page_num, roi_area):
     """
-    Extract tables using Camelot with both lattice and stream methods.
-    Works well with both text-based and image-based PDFs.
-    """
-    print("🐪 Attempting table extraction with Camelot...")
+    Check if there's extractable text content within the ROI area.
     
+    Args:
+        pdf_path (str): Path to the PDF file
+        page_num (int): Page number (1-based)
+        roi_area (list): ROI area as [top, left, bottom, right] in points
+        
+    Returns:
+        bool: True if text content is found, False otherwise
+    """
     try:
-        import camelot
+        import pdfplumber
         
-        tables = []
-        
-        # Method 1: Try lattice method first with better settings
-        try:
-            print("  Trying Camelot lattice method...")
-            tables_camelot = camelot.read_pdf(
-                pdf_path, 
-                pages=str(pages), 
-                flavor='lattice',
-                split_text=True,        # Split text in cells
-                flag_size=True,         # Use table size for filtering
-                strip_text='\n',        # Strip newlines
-                line_scale=40,          # Increase line detection sensitivity
-                copy_text=['h', 'v'],   # Copy text from horizontal and vertical lines
-                shift_text=['l', 't'],  # Shift text left and top
-                table_areas=None,       # Auto-detect table areas
-                columns=None,           # Auto-detect columns
-                process_background=True # Process background for better detection
-            )
+        with pdfplumber.open(pdf_path) as pdf:
+            if page_num > len(pdf.pages):
+                print(f"❌ Page {page_num} not found in PDF")
+                return False
             
-            if tables_camelot and len(tables_camelot) > 0:
-                # Filter tables by accuracy and size with structure validation
-                good_tables = []
-                for i, table in enumerate(tables_camelot):
-                    accuracy = table.accuracy
-                    rows, cols = table.df.shape
-                    print(f"    Camelot table {i+1}: accuracy={accuracy:.1f}%, size={rows}x{cols}")
-                    
-                    # Check if table has reasonable structure
-                    structure_ok = validate_table_structure(table.df)
-                    
-                    # More balanced filtering - higher accuracy threshold with structure validation
-                    if accuracy > 20 and rows >= 5 and cols >= 3 and structure_ok:
-                        good_tables.append(table.df)
-                        print(f"      ✅ Keeping table {i+1} (good accuracy and structure)")
-                    else:
-                        print(f"      ❌ Skipping table {i+1} (low accuracy, bad structure, or too small)")
-                        print(f"        - Accuracy: {accuracy:.1f}% (need >20%)")
-                        print(f"        - Size: {rows}x{cols} (need ≥5x3)")
-                        print(f"        - Structure OK: {structure_ok}")
-                
-                if good_tables:
-                    tables = good_tables
-                    print(f"    ✅ Camelot lattice extracted {len(tables)} good tables")
-                else:
-                    print("    ❌ No good quality tables found with lattice method")
+            page = pdf.pages[page_num - 1]  # Convert to 0-based index
             
-        except Exception as e:
-            print(f"    ❌ Camelot lattice method failed: {e}")
-        
-        # Method 2: If lattice didn't work, try stream method with better settings
-        if not tables:
-            try:
-                print("  Trying Camelot stream method...")
-                tables_camelot = camelot.read_pdf(
-                    pdf_path, 
-                    pages=str(pages), 
-                    flavor='stream',
-                    split_text=True,        # Split text in cells
-                    flag_size=True,         # Use table size for filtering
-                    strip_text='\n',        # Strip newlines
-                    edge_tol=500,           # Tolerance for edge detection
-                    row_tol=2,             # Row tolerance for better separation
-                    column_tol=0           # Column tolerance for better separation
-                )
-                
-                if tables_camelot and len(tables_camelot) > 0:
-                    # Filter tables by accuracy and size with structure validation
-                    good_tables = []
-                    for i, table in enumerate(tables_camelot):
-                        accuracy = table.accuracy
-                        rows, cols = table.df.shape
-                        print(f"    Camelot table {i+1}: accuracy={accuracy:.1f}%, size={rows}x{cols}")
-                        
-                        # Check if table has reasonable structure
-                        structure_ok = validate_table_structure(table.df)
-                        
-                        # Lower threshold for stream method but still validate structure
-                        if accuracy > 15 and rows >= 3 and cols >= 3 and structure_ok:
-                            good_tables.append(table.df)
-                            print(f"      ✅ Keeping table {i+1} (acceptable accuracy and structure)")
-                        else:
-                            print(f"      ❌ Skipping table {i+1} (low accuracy, bad structure, or too small)")
-                            print(f"        - Accuracy: {accuracy:.1f}% (need >15%)")
-                            print(f"        - Size: {rows}x{cols} (need ≥3x3)")
-                            print(f"        - Structure OK: {structure_ok}")
-                    
-                    if good_tables:
-                        tables = good_tables
-                        print(f"    ✅ Camelot stream extracted {len(tables)} good tables")
-                    else:
-                        print("    ❌ No good quality tables found with stream method")
-                        
-            except Exception as e:
-                print(f"    ❌ Camelot stream method failed: {e}")
-        
-        # Method 3: If both methods failed, try with very lenient settings as last resort
-        if not tables:
-            print("  Trying Camelot with very lenient settings as last resort...")
-            try:
-                tables_camelot = camelot.read_pdf(
-                    pdf_path, 
-                    pages=str(pages), 
-                    flavor='lattice',
-                    split_text=True,
-                    flag_size=False,        # Don't use size filtering
-                    strip_text='\n',
-                    line_scale=15,          # Very sensitive line detection
-                    copy_text=['h', 'v'],
-                    shift_text=['l', 't'],
-                    process_background=False
-                )
-                
-                if tables_camelot and len(tables_camelot) > 0:
-                    # Accept any table that has reasonable dimensions
-                    for i, table in enumerate(tables_camelot):
-                        accuracy = table.accuracy
-                        rows, cols = table.df.shape
-                        print(f"    Camelot table {i+1}: accuracy={accuracy:.1f}%, size={rows}x{cols}")
-                        
-                        # Very lenient - just check minimum size
-                        if rows >= 3 and cols >= 3:
-                            # Try to repair the table structure
-                            repaired_table = repair_table_structure(table.df)
-                            if repaired_table is not None:
-                                tables.append(repaired_table)
-                                print(f"      ✅ Keeping table {i+1} (repaired structure)")
-                            else:
-                                print(f"      ❌ Could not repair table {i+1} structure")
-                        else:
-                            print(f"      ❌ Skipping table {i+1} (too small)")
-                    
-                    if tables:
-                        print(f"    ✅ Camelot extracted {len(tables)} tables with lenient settings")
-                    
-            except Exception as e:
-                print(f"    ❌ Camelot lenient method failed: {e}")
-        
-        if not tables:
-            print("❌ Camelot found no suitable tables")
+            # Convert ROI area from tabula format to pdfplumber format
+            # Tabula: [top, left, bottom, right] in points from top-left
+            # pdfplumber: uses (left, bottom, right, top) from bottom-left
+            top, left, bottom, right = roi_area
             
-        return tables
-        
+            # Convert coordinates (pdfplumber uses bottom-left origin)
+            page_height = page.height
+            bbox = (left, page_height - bottom, right, page_height - top)
+            
+            # Extract text from the ROI area
+            roi_text = page.crop(bbox).extract_text()
+            
+            if roi_text and roi_text.strip():
+                print(f"✅ ROI area contains text: {len(roi_text.strip())} characters")
+                return True
+            else:
+                print(f"❌ ROI area contains no extractable text")
+                return False
+                
     except ImportError:
-        print("❌ Camelot not available - install with: pip install camelot-py[cv]")
-        return []
-    except Exception as e:
-        print(f"❌ Camelot extraction failed: {e}")
-        return []
-
-def validate_table_structure(df):
-    """
-    Validate if a table has reasonable structure for BOM data.
-    Returns True if the table structure looks reasonable.
-    """
-    try:
-        if df is None or df.empty:
-            return False
-        
-        rows, cols = df.shape
-        
-        # Check if table has reasonable dimensions
-        if rows < 3 or cols < 3:
-            return False
-        
-        # Check if cells are not mostly empty
-        non_empty_cells = df.astype(str).apply(lambda x: x.str.strip() != '').sum().sum()
-        total_cells = rows * cols
-        fill_ratio = non_empty_cells / total_cells
-        
-        if fill_ratio < 0.1:  # Less than 10% of cells have content
-            return False
-        
-        # Check if there's not too much text crammed into single cells
-        # (indicates poor column separation)
-        avg_cell_length = df.astype(str).apply(lambda x: x.str.len()).mean().mean()
-        if avg_cell_length > 200:  # Very long average cell content
-            return False
-        
-        # Check if first few rows don't have extremely long merged content
-        for i in range(min(3, rows)):
-            for j in range(cols):
-                cell_content = str(df.iloc[i, j]).strip()
-                if len(cell_content) > 500:  # Single cell with >500 characters
-                    return False
-        
+        print("⚠️ pdfplumber not available - assuming text content exists")
         return True
-        
     except Exception as e:
-        print(f"⚠️ Table structure validation failed: {e}")
-        return False
+        print(f"❌ Error checking ROI text content: {e}")
+        return True  # Default to assuming text exists
 
-def repair_table_structure(df):
+def extract_tables_with_roi_selection_tabula(pdf_path, pages, roi_callback=None):
     """
-    Attempt to repair poorly structured tables by splitting merged content.
-    Returns repaired DataFrame or None if repair fails.
+    Extract tables from PDF using manual ROI (Region of Interest) selection.
+    
+    ROI areas should be provided via environment variable BOM_ROI_AREAS as JSON.
+    
+    Args:
+        pdf_path (str): Path to the PDF file
+        pages (str): Page range to extract from
+        roi_callback (callable): Optional callback function (deprecated, use environment)
     """
-    try:
-        if df is None or df.empty:
-            return None
-        
-        # Create a copy to work with
-        repaired_df = df.copy()
-        
-        # Look for cells with multiple part numbers/descriptions merged together
-        # This is a basic repair - could be enhanced further
-        for i in range(len(repaired_df)):
-            for j in range(len(repaired_df.columns)):
-                cell_content = str(repaired_df.iloc[i, j]).strip()
-                
-                # If cell contains multiple part numbers (pattern: numbers followed by text)
-                if len(cell_content) > 100:
-                    # Try to split on common patterns
-                    import re
-                    # Pattern for part numbers like "001 SIEMENS" or "002 RITTAL"
-                    parts = re.split(r'(\d{3,}\s+[A-Z][A-Z\s]+)', cell_content)
-                    if len(parts) > 3:  # Found multiple parts
-                        # Keep only the first part for this cell
-                        repaired_df.iloc[i, j] = parts[1] if len(parts) > 1 else cell_content[:100]
-        
-        # Validate the repaired table
-        if validate_table_structure(repaired_df):
-            return repaired_df
-        else:
-            return None
-            
-    except Exception as e:
-        print(f"⚠️ Table repair failed: {e}")
-        return None
-
-def process_pdf_with_ocr(pdf_path, force_ocr=False):
-    """
-    Process a PDF with OCR to make it searchable.
-    Returns the path to the OCR'd PDF or None if OCR failed.
-    """
-    print(f"🔄 Processing PDF with OCR (force_ocr={force_ocr})...")
+    print("\n📍 Starting ROI-based table extraction...")
     
     try:
-        ocr_available, ocr_version, ocr_error = check_ocrmypdf_installation()
-        if not ocr_available:
-            print(f"❌ OCR not available: {ocr_error}")
-            return None
+        # Get ROI areas from environment variable
+        roi_areas = None
+        roi_areas_json = os.environ.get("BOM_ROI_AREAS")
         
-        print(f"✅ OCR available: {ocr_version}")
-        
-        # Create output path in same directory as input PDF
-        pdf_path_obj = Path(pdf_path)
-        output_path = pdf_path_obj.parent / f"{pdf_path_obj.stem}_ocr{pdf_path_obj.suffix}"
-        
-        # Process with OCR
-        ocr_success, ocr_pdf_path, ocr_error = preprocess_pdf_with_ocr(
-            pdf_path, 
-            output_path=str(output_path), 
-            force_ocr=force_ocr
-        )
-        
-        if ocr_success:
-            print(f"✅ OCR processing successful!")
-            print(f"📄 OCR'd PDF: {ocr_pdf_path}")
-            
-            # Check if the OCR'd PDF is actually searchable now
-            if not force_ocr:
-                try:
-                    from pipeline.ocr_preprocessor import is_pdf_searchable
-                    is_searchable = is_pdf_searchable(ocr_pdf_path)
-                    
-                    if not is_searchable:
-                        print("⚠️ OCR'd PDF still not searchable, retrying with --force-ocr...")
-                        # Clean up the non-searchable result
-                        cleanup_ocr_temp_files(ocr_pdf_path)
-                        # Retry with force OCR
-                        return process_pdf_with_ocr(pdf_path, force_ocr=True)
-                except Exception as e:
-                    print(f"⚠️ Could not verify OCR'd PDF searchability: {e}")
-            
-            return ocr_pdf_path
-        else:
-            print(f"❌ OCR processing failed: {ocr_error}")
-            return None
-            
-    except Exception as e:
-        print(f"❌ OCR processing error: {e}")
-        return None
-
-def clean_and_filter_tables(tables, method_name):
-    """
-    Clean and filter extracted tables to keep only those that look like BOMs.
-    """
-    print(f"🧹 Cleaning and filtering {len(tables)} tables from {method_name}...")
-    
-    cleaned_tables = []
-    for i, table in enumerate(tables):
-        if table is not None and not table.empty:
-            # Convert all data to string and handle NaN values properly
-            table = table.fillna('')  # Fill NaN with empty strings first
-            table = table.astype(str)  # Convert to string
-            
-            # Clean up common extraction artifacts
-            table = table.replace('nan', '')
-            table = table.replace('None', '')
-            
-            # Remove completely empty rows and columns
-            table = table.loc[:, (table != '').any(axis=0)]  # Remove empty columns
-            table = table.loc[(table != '').any(axis=1)]     # Remove empty rows
-            
-            # Reset index
-            table = table.reset_index(drop=True)
-            
-            # Clean individual cells of problematic characters
-            for col in table.columns:
-                # More aggressive cleaning for better readability
-                table[col] = table[col].str.replace(r'[^\w\s\-\.\,\/\(\)\:]', ' ', regex=True)  # Keep only alphanumeric, spaces, and common punctuation
-                table[col] = table[col].str.replace(r'\s+', ' ', regex=True)  # Normalize whitespace
-                table[col] = table[col].str.strip()  # Remove leading/trailing whitespace
-            
-            # Filter out tables that don't look like BOMs
-            if not table.empty:
-                # Check if this looks like a BOM table
-                is_bom_table = is_likely_bom_table(table)
-                if is_bom_table:
-                    cleaned_tables.append(table)
-                    print(f"  Table {i+1}: {table.shape[0]} rows, {table.shape[1]} columns - ✅ Looks like BOM")
-                    # Show a sample of the cleaned data for debugging
-                    print(f"  Sample cleaned data from Table {i+1}:")
-                    print(table.head(2).to_string())
-                    print("  ---")
-                else:
-                    print(f"  Table {i+1}: {table.shape[0]} rows, {table.shape[1]} columns - ❌ Doesn't look like BOM, skipping")
-                    # Show sample of rejected table for debugging
-                    print(f"  Sample rejected data from Table {i+1}:")
-                    print(table.head(2).to_string())
-                    print("  ---")
-    
-    return cleaned_tables
-
-def extract_tables_from_pdf(pdf_path, pages):
-    """
-    Main function to extract tables from PDF using the best strategy based on PDF type.
-    """
-    ocr_pdf_path = None  # Track OCR'd PDF for cleanup
-    
-    try:
-        print(f"\n🔍 Extracting tables from pages: {pages}")
-        print(f"📄 PDF path: {pdf_path}")
-        
-        # Handle path encoding issues
-        try:
-            # Ensure the PDF path is properly encoded
-            if isinstance(pdf_path, str):
-                pdf_path = pdf_path.encode('utf-8', errors='ignore').decode('utf-8')
-            print(f"📄 Normalized PDF path: {pdf_path}")
-        except Exception as path_error:
-            print(f"⚠️ Warning: Could not normalize PDF path: {path_error}")
-        
-        # Check if running in PyInstaller environment
-        if getattr(sys, 'frozen', False):
-            print("🔧 Running in PyInstaller environment")
-            print(f"🔧 JAVA_TOOL_OPTIONS: {os.environ.get('JAVA_TOOL_OPTIONS', 'Not set')}")
-        
-        # Step 1: Detect PDF type
-        pdf_type = detect_pdf_type(pdf_path)
-        
-        tables = []
-        
-        if pdf_type == 'text':
-            print("\n📊 PDF is text-based - trying text extraction methods...")
-            
-            # Try Tabula first (best for text-based PDFs)
-            tables = extract_tables_with_tabula_method(pdf_path, pages)
-            
-            if not tables:
-                print("📊 Tabula failed - trying Camelot as fallback...")
-                tables = extract_tables_with_camelot_method(pdf_path, pages)
-                
-        else:  # pdf_type == 'image'
-            print("\n🖼️ PDF is image-based - processing with OCR first...")
-            
-            # For image-based PDFs, start with force_ocr=True to handle vector content
-            # Vector PDFs need force_ocr to be processed properly
-            ocr_pdf_path = process_pdf_with_ocr(pdf_path, force_ocr=True)
-            
-            if ocr_pdf_path:
-                print("📊 OCR successful - trying table extraction on OCR'd PDF...")
-                working_pdf_path = ocr_pdf_path
-                
-                # Try Camelot first (often works better with OCR'd PDFs)
-                tables = extract_tables_with_camelot_method(working_pdf_path, pages)
-                
-                if not tables:
-                    print("📊 Camelot failed - trying Tabula as fallback...")
-                    tables = extract_tables_with_tabula_method(working_pdf_path, pages)
-            else:
-                print("❌ OCR failed - falling back to original PDF with text extraction methods...")
-                # Fallback to original PDF with text methods
-                tables = extract_tables_with_tabula_method(pdf_path, pages)
-                
-                if not tables:
-                    tables = extract_tables_with_camelot_method(pdf_path, pages)
-        
-        # Step 2: Clean and filter tables
-        if tables:
-            print(f"\n🧹 Processing {len(tables)} extracted tables...")
-            
-            # Step 2a: Check for and split dual-column BOM tables (only for certain patterns)
-            processed_tables = []
-            for i, table in enumerate(tables):
-                print(f"  Processing table {i+1}...")
-                # Only apply dual-column splitting if it looks like a dual-column BOM
-                if should_split_dual_column(table):
-                    split_table = split_dual_column_bom(table)
-                    processed_tables.append(split_table)
-                else:
-                    processed_tables.append(table)
-            
-            # Step 2b: Clean and filter the processed tables
-            method_name = "Tabula" if pdf_type == 'text' else "Camelot"
-            cleaned_tables = clean_and_filter_tables(processed_tables, method_name)
-            
-            if cleaned_tables:
-                print(f"🎉 Successfully extracted {len(cleaned_tables)} BOM tables")
-                
-                # Step 3: Validate extracted tables
-                tables_valid, warning_message = validate_extracted_tables(cleaned_tables)
-                
-                if not tables_valid:
-                    print(warning_message)
-                    # Show warning in GUI if available
-                    try:
-                        messagebox.showwarning("Table Extraction Warning", warning_message)
-                    except:
-                        pass  # GUI not available, warning already printed
-                    return []
-                elif warning_message:
-                    print(warning_message)
-                    try:
-                        messagebox.showinfo("Table Extraction Info", warning_message)
-                    except:
-                        pass  # GUI not available, info already printed
-                
-                print(f"✅ Final result: {len(cleaned_tables)} valid BOM tables extracted")
-                return cleaned_tables
-            else:
-                print("❌ No valid BOM tables found after cleaning and filtering")
+        if roi_areas_json:
+            import json
+            try:
+                roi_areas = json.loads(roi_areas_json)
+                print(f"✅ ROI areas loaded from environment: {len(roi_areas)} areas")
+            except json.JSONDecodeError as e:
+                print(f"❌ Failed to parse ROI areas from environment: {e}")
                 return []
         else:
-            print("❌ No tables extracted from the PDF")
+            print("❌ No ROI areas found in environment variable BOM_ROI_AREAS")
             return []
         
-    except Exception as e:
-        error_message = f"Error during table extraction: {e}"
-        friendly_error = handle_common_errors(str(e))
-        print(friendly_error)
+        if not roi_areas:
+            print("❌ No ROI areas available for extraction")
+            return []
         
-        # Show error in GUI if available
-        try:
-            messagebox.showerror("Table Extraction Error", friendly_error)
-        except:
-            pass  # GUI not available, error already printed
+        print(f"✅ ROI areas loaded for {len(roi_areas)} pages")
         
-        return []
-    
-    finally:
-        # Clean up OCR temporary files only if they are in temp directories
-        if ocr_pdf_path:
-            print("🧹 Cleaning up OCR temporary files...")
-            # Only clean up if it's in a temp directory (not our permanent OCR files)
-            if "bomination_ocr_" in str(ocr_pdf_path):
-                cleanup_ocr_temp_files(ocr_pdf_path)
-            else:
-                print("📁 OCR'd PDF saved permanently, not cleaning up")
-
-# Keep the old function name for backward compatibility
-def extract_tables_with_tabula(pdf_path, pages):
-    """
-    Legacy function name - redirects to the new main function.
-    """
-    return extract_tables_from_pdf(pdf_path, pages)
-
-# Customer-specific formatting has been moved to customer_formatters.py
-# Use apply_customer_formatter(df, customer_name) instead of calling specific functions directly
-
-def format_table_as_text(table):
-    """Format a pandas DataFrame as readable text with proper spacing and wrapping."""
-    if table.empty:
-        return "Empty table"
-    
-    # Get column headers
-    headers = [f"Col_{j}" for j in range(len(table.columns))]
-    
-    # Calculate column widths dynamically based on ALL rows
-    col_widths = []
-    for j in range(len(table.columns)):
-        max_width = len(headers[j])
-        for idx in range(len(table)):  # Check all rows, not just first few
-            cell_value = str(table.iloc[idx, j])
-            if cell_value and cell_value.strip():
-                # Limit individual cell display to reasonable length
-                cell_value = ' '.join(cell_value.split())
-                max_width = max(max_width, min(len(cell_value), 40))
-        col_widths.append(max(max_width, 10))  # Minimum width of 10
-    
-    # Format the table text
-    text_lines = []
-    
-    # Header row
-    header_line = " | ".join(header.ljust(width) for header, width in zip(headers, col_widths))
-    text_lines.append(header_line)
-    text_lines.append("-" * len(header_line))
-    
-    # Display ALL rows
-    for idx in range(len(table)):
-        row_parts = []
-        for col_idx, width in enumerate(col_widths):
-            cell_value = str(table.iloc[idx, col_idx])
-            if cell_value and cell_value.strip():
-                cell_value = ' '.join(cell_value.split())
-                # Truncate if too long for the column
-                if len(cell_value) > width:
-                    cell_value = cell_value[:width-3] + "..."
-            else:
-                cell_value = ""
-            row_parts.append(cell_value.ljust(width))
+        # Debug: Show what areas were loaded
+        for page_num, area in roi_areas.items():
+            print(f"📍 Page {page_num}: ROI area = {area}")
         
-        text_lines.append(" | ".join(row_parts))
-    
-    return "\n".join(text_lines)
-
-# Table selector functionality has been moved to table_selector.py
-# Use show_table_selector(tables) from the imported module
-
-# Review functionality has been moved to review_window.py
-# Use review_and_edit_dataframe_cli(df) from the imported module
-
-def save_tables_to_excel(tables, output_path):
-    try:
-        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            for i, table in enumerate(tables):
-                sheet_name = f"Table_{i+1}"
-                table.to_excel(writer, index=False, sheet_name=sheet_name)
-        print(f"\nTables saved to: {output_path}")
-    except Exception as e:
-        print(f"Failed to save Excel file: {e}")
-
-def merge_tables_and_export(tables, output_path, sheet_name="Combined_BoM", company=""):
-    print(f"\n📊 MERGE DEBUG: ===== MERGE_TABLES_AND_EXPORT CALLED =====")
-    print(f"📊 MERGE DEBUG: Received {len(tables)} tables to merge")
-    for i, table in enumerate(tables):
-        print(f"📊 MERGE DEBUG: Table {i+1} for merge: shape={table.shape}, sample={table.iloc[0].to_dict() if len(table) > 0 else 'EMPTY'}")
-    print(f"📊 MERGE DEBUG: Output path: {output_path}")
-    print(f"📊 MERGE DEBUG: ===== END MERGE INPUT DEBUG =====")
-    
-    try:
-        merged_df = pd.concat(tables, ignore_index=True)
+        # Extract tables using the provided areas
+        all_tables = []
+        ocr_pdf_path = None
         
-        print(f"\n📊 MERGE DEBUG: ===== BEFORE COMPANY PROCESSING =====")
-        print(f"📊 MERGE DEBUG: Merged table shape: {merged_df.shape}")
-        print(f"📊 MERGE DEBUG: Current columns: {merged_df.columns.tolist()}")
-        print(f"📊 MERGE DEBUG: First 3 rows:")
-        print(merged_df.head(3).to_string())
-        print(f"📊 MERGE DEBUG: ===== END BEFORE PROCESSING =====")
-
-        company = company.lower()
-        if company == "farrell":
-            print("📊 MERGE DEBUG: Applying Farrell-specific table formatting...")
-            merged_df = apply_customer_formatter(merged_df, 'farrell')
-        elif company == "nel":
-            print("📊 MERGE DEBUG: Applying NEL-specific table formatting...")
-            merged_df = apply_customer_formatter(merged_df, 'nel')
-        elif company == "primetals":
-            print("📊 MERGE DEBUG: Applying Primetals-specific table formatting...")
-            merged_df = apply_customer_formatter(merged_df, 'primetals')
+        # Check if we're already working with an OCR-processed PDF
+        is_ocr_processed = "_ocr" in Path(pdf_path).stem
+        
+        if is_ocr_processed:
+            print(f"🔍 Detected OCR-processed PDF: {pdf_path}")
+            print(f"⚠️ ROI coordinates may not be accurate due to OCR layout changes")
+            working_pdf_path = pdf_path
+            # Skip text content checking for OCR-processed PDFs since layout may have changed
         else:
-            print(f"📊 MERGE DEBUG: No company-specific formatting applied (company='{company}')")
+            # Check if ROI areas contain text content
+            print(f"\n🔍 Checking ROI areas for text content...")
+            roi_needs_ocr = False
             
-            # Try to auto-detect company from the data
-            merged_text = ' '.join(merged_df.fillna('').astype(str).values.flatten()).upper()
-            if 'NEL HYDROGEN' in merged_text or 'PROTON ENERGY' in merged_text:
-                print("📊 MERGE DEBUG: Auto-detected NEL company from data, applying NEL formatting...")
-                merged_df = apply_customer_formatter(merged_df, 'nel')
-            elif 'FARRELL' in merged_text:
-                print("📊 MERGE DEBUG: Auto-detected Farrell company from data, applying Farrell formatting...")
-                merged_df = apply_customer_formatter(merged_df, 'farrell')
-            elif 'PRIMETALS' in merged_text:
-                print("📊 MERGE DEBUG: Auto-detected Primetals company from data, applying Primetals formatting...")
-                merged_df = apply_customer_formatter(merged_df, 'primetals')
-            else:
-                # Apply generic formatting as fallback
-                print("📊 MERGE DEBUG: No customer detected, applying generic formatting...")
-                merged_df = apply_customer_formatter(merged_df, 'generic')
-
-        print(f"\n📊 MERGE DEBUG: ===== AFTER COMPANY PROCESSING =====")
-        print(f"📊 MERGE DEBUG: Table shape: {merged_df.shape}")
-        print(f"📊 MERGE DEBUG: Final columns: {merged_df.columns.tolist()}")
-        print(f"📊 MERGE DEBUG: First 3 rows after company processing:")
-        print(merged_df.head(3).to_string())
-        print(f"📊 MERGE DEBUG: ===== END AFTER PROCESSING =====\n")
-
-        # Remove completely empty rows
-        merged_df = merged_df.dropna(how='all')
+            for page_num, area in roi_areas.items():
+                print(f"🔍 Checking page {page_num} ROI area for text content...")
+                has_text = check_roi_text_content(pdf_path, int(page_num), area)
+                if not has_text:
+                    print(f"❌ Page {page_num} ROI area has no text - will need OCR")
+                    roi_needs_ocr = True
+                else:
+                    print(f"✅ Page {page_num} ROI area has text - can use direct extraction")
+            
+            # If any ROI area needs OCR, process the entire PDF with OCR first
+            working_pdf_path = pdf_path
+            if roi_needs_ocr:
+                print(f"\n🔄 ROI areas need OCR - preprocessing entire PDF...")
+                
+                try:
+                    # Check if OCR preprocessor is available
+                    try:
+                        from pipeline.ocr_preprocessor import preprocess_pdf_with_ocr
+                        print("🔧 OCR preprocessor imported successfully")
+                    except ImportError as import_error:
+                        print(f"❌ OCR preprocessor import failed: {import_error}")
+                        print("⚠️ Continuing with original PDF despite no text in ROI")
+                    else:
+                        # Create OCR version of the PDF using proper path handling
+                        pdf_path_obj = Path(pdf_path)
+                        ocr_pdf_path = pdf_path_obj.parent / f"{pdf_path_obj.stem}_ocr.pdf"
+                        
+                        print(f"🔧 OCR input: {pdf_path}")
+                        print(f"🔧 OCR output: {ocr_pdf_path}")
+                        
+                        success = preprocess_pdf_with_ocr(pdf_path, str(ocr_pdf_path))
+                        
+                        print(f"🔧 OCR success: {success}")
+                        print(f"🔧 OCR file exists: {ocr_pdf_path.exists()}")
+                        
+                        if success and ocr_pdf_path.exists():
+                            print(f"✅ OCR preprocessing successful: {ocr_pdf_path}")
+                            working_pdf_path = str(ocr_pdf_path)
+                        else:
+                            print("❌ OCR preprocessing failed")
+                            if not success:
+                                print("❌ OCR function returned False")
+                            if not ocr_pdf_path.exists():
+                                print("❌ OCR output file was not created")
+                            print("⚠️ Continuing with original PDF")
+                            
+                except Exception as e:
+                    print(f"❌ OCR preprocessing error: {e}")
+                    import traceback
+                    print("📋 OCR error traceback:")
+                    traceback.print_exc()
+                    print("⚠️ Continuing with original PDF")
         
-        # Remove any remaining duplicate header rows
-        header_row = merged_df.columns.tolist()
-        merged_df = merged_df[~merged_df.apply(lambda row: row.tolist() == header_row, axis=1)]
+        # Now attempt extraction with the appropriate PDF
+        print(f"\n🔄 Attempting extraction from: {working_pdf_path}")
         
-        # Remove duplicate rows and reset index
-        merged_df = merged_df.drop_duplicates().reset_index(drop=True)
+        # First attempt: try extraction with current PDF (original or OCR'd)
+        extraction_attempts = 0
         
-        # CRITICAL: Apply final "N/A" filling after all other processing
-        # This ensures empty cells are filled with "N/A" for OEMSecrets compatibility
-        print("📊 MERGE DEBUG: Applying final 'N/A' filling for OEMSecrets compatibility...")
-        merged_df = merged_df.fillna('N/A')
-        merged_df = merged_df.replace(['', 'nan', 'None', 'NaN'], 'N/A')
+        while extraction_attempts < 1 and not all_tables:  # Only one attempt needed now
+            extraction_attempts += 1
+            
+            print(f"\n🔄 Attempt {extraction_attempts}: Extracting from {'OCR-processed' if working_pdf_path != pdf_path else 'original'} PDF...")
+            
+            for page_num, area in roi_areas.items():
+                print(f"\n📊 Extracting table from page {page_num} using ROI area: {area}")
+                
+                try:
+                    import tabula
+                    
+                    print(f"🔧 Tabula extraction debug:")
+                    print(f"   Working PDF: {working_pdf_path}")
+                    print(f"   PDF exists: {os.path.exists(working_pdf_path)}")
+                    print(f"   Page: {page_num}")
+                    print(f"   ROI area: {area}")
+                    
+                    # For OCR-processed PDFs, skip tabula ROI extraction since coordinates may not be accurate
+                    # Let the system fall back to Camelot for better OCR-processed PDF handling
+                    if is_ocr_processed:
+                        print(f"   🔍 OCR-processed PDF detected - skipping tabula ROI extraction")
+                        print(f"   ⚠️ ROI coordinates may not be accurate after OCR processing")
+                        print(f"   🔄 Returning empty to trigger Camelot fallback...")
+                        tables = []
+                    else:
+                        # Original logic for non-OCR processed PDFs
+                        print(f"   🔄 Using original ROI extraction logic...")
+                        
+                        # First try with area restriction
+                        tables = tabula.read_pdf(
+                            working_pdf_path,
+                            pages=[int(page_num)],
+                            area=area,  # [top, left, bottom, right] in points
+                            multiple_tables=False,
+                            lattice=True,
+                            guess=False,
+                            java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                            pandas_options={'header': None}
+                        )
+                    
+                    print(f"🔧 Tabula returned: {type(tables)}")
+                    if tables:
+                        print(f"🔧 Number of tables: {len(tables)}")
+                        for i, table in enumerate(tables):
+                            print(f"🔧 Table {i+1}: shape={table.shape}, empty={table.empty}")
+                            if not table.empty and table.shape[0] >= 2 and table.shape[1] >= 2:
+                                extraction_method = "OCR-skipped" if is_ocr_processed else "ROI"
+                                print(f"    ✅ Extracted table {i+1}: {table.shape[0]}×{table.shape[1]} ({extraction_method})")
+                                all_tables.append(table)
+                            else:
+                                print(f"    ❌ Table {i+1} too small: {table.shape[0]}×{table.shape[1]}")
+                    else:
+                        print(f"    ❌ No tables extracted from page {page_num}")
+                        print(f"    ❌ Tabula returned: {tables}")
+                        
+                        # For OCR-processed PDFs, we expect this to fail so Camelot can handle it
+                        if is_ocr_processed:
+                            print(f"    ✅ Expected result for OCR-processed PDF - Camelot will handle this")
+                        else:
+                            # Only try fallback for non-OCR processed PDFs
+                            print(f"    🔄 Trying without ROI area restriction...")
+                            try:
+                                fallback_tables = tabula.read_pdf(
+                                    working_pdf_path,
+                                    pages=[int(page_num)],
+                                    multiple_tables=True,
+                                    lattice=True,
+                                    guess=False,
+                                    java_options="-Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US -Djava.awt.headless=true",
+                                    pandas_options={'header': None}
+                                )
+                                
+                                if fallback_tables:
+                                    print(f"    ✅ Fallback found {len(fallback_tables)} tables without ROI")
+                                    for i, table in enumerate(fallback_tables):
+                                        if not table.empty and table.shape[0] >= 2 and table.shape[1] >= 2:
+                                            print(f"    ✅ Extracted fallback table {i+1}: {table.shape[0]}×{table.shape[1]} (no ROI)")
+                                            all_tables.append(table)
+                                        else:
+                                            print(f"    ❌ Fallback table {i+1} too small: {table.shape[0]}×{table.shape[1]}")
+                                else:
+                                    print(f"    ❌ No fallback tables found either")
+                            except Exception as fallback_error:
+                                print(f"    ❌ Fallback extraction failed: {fallback_error}")
+                    
+                    # Note: Camelot fallback is now handled by extract_main.py orchestrator
+                    # This module only handles tabula-specific extraction
+                    
+                except Exception as e:
+                    print(f"❌ Error extracting from page {page_num}: {e}")
+                    print(f"🔧 Error type: {type(e).__name__}")
+                    import traceback
+                    print("📋 Tabula error traceback:")
+                    traceback.print_exc()
         
-        print(f"📊 MERGE DEBUG: Final cleaned table shape: {merged_df.shape}")
-        print(f"📊 MERGE DEBUG: Sample of final data with N/A filling:")
-        print(merged_df.head(3).to_string())
-
-        # Check if we should show the review window
-        # If called from GUI thread, we'll skip the review here and handle it in the GUI
-        skip_review = os.environ.get("BOM_SKIP_REVIEW", "false").lower() == "true"
+        # Clean up OCR file if created
+        if ocr_pdf_path and os.path.exists(str(ocr_pdf_path)):
+            try:
+                os.remove(str(ocr_pdf_path))
+                print(f"🧹 Cleaned up OCR file: {ocr_pdf_path}")
+            except Exception as cleanup_error:
+                print(f"⚠️ Could not clean up OCR file: {cleanup_error}")
         
-        if not skip_review:
-            print("Opening manual review window...")
-            merged_df = review_and_edit_dataframe_cli(merged_df)
+        if all_tables:
+            print(f"\n✅ Successfully extracted {len(all_tables)} tables using ROI selection")
+            from pipeline.extract_main import clean_and_filter_tables
+            return clean_and_filter_tables(all_tables, "roi")
         else:
-            print("Skipping manual review (will be handled by GUI)...")
-
-        merged_df.to_excel(output_path, index=False, sheet_name=sheet_name)
-        print(f"✅ Final cleaned and reviewed table saved to: {output_path}")
-        
-        # Return the dataframe for GUI processing
-        return merged_df
-
+            print("\n❌ No tables extracted using ROI selection")
+            return []
+    
     except Exception as e:
-        print(f"❌ Failed to merge and export tables: {e}")
+        print(f"❌ Error in ROI-based extraction: {e}")
         import traceback
         traceback.print_exc()
+        return []
 
-def main():
-    print("\n=== BoM Table Extractor with GUI Preview ===\n")
-    pdf_path = os.environ.get("BOM_PDF_PATH")
-    pages = os.environ.get("BOM_PAGE_RANGE")
-    company = os.environ.get("BOM_COMPANY")
-    output_directory = os.environ.get("BOM_OUTPUT_DIRECTORY")
-
-    if not pdf_path or not pages:
-        error_msg = "Missing required input parameters:\n"
-        if not pdf_path:
-            error_msg += "- BOM_PDF_PATH environment variable not set\n"
-        if not pages:
-            error_msg += "- BOM_PAGE_RANGE environment variable not set\n"
-        print(error_msg)
-        return
-
-    print(f"Processing PDF: {pdf_path}")
-    print(f"Page range: {pages}")
-    print(f"Company: {company or 'None specified'}")
-    print(f"Output directory: {output_directory or 'Same as input PDF'}")
-
-    tables = extract_tables_from_pdf(pdf_path, pages)
-
-    if tables:
-        print(f"\nSUCCESS: Successfully extracted {len(tables)} table(s)")
-        selected_tables = show_table_selector(tables)
-
-        if not selected_tables:
-            print("No tables selected. Exiting.")
-            return
-
-        # Generate output paths - save to PDF directory for debugging
-        # Use PDF directory instead of output_directory parameter
-        pdf_dir = Path(pdf_path).parent
-        pdf_name = Path(pdf_path).stem
-        
-        extracted_path = pdf_dir / f"{pdf_name}_extracted.xlsx"
-        merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
-        
-        print(f"📁 Saving extracted tables to: {extracted_path}")
-        print(f"📁 Saving merged table to: {merged_path}")
-
-        save_tables_to_excel(selected_tables, extracted_path)
-        merge_tables_and_export(selected_tables, merged_path, company=company)
-        
-        print(f"\nSUCCESS: Table extraction completed successfully!")
-        print(f"OUTPUT: Extracted tables saved to: {extracted_path}")
-        print(f"OUTPUT: Merged table saved to: {merged_path}")
-    else:
-        error_msg = (
-            "❌ No tables extracted from the PDF.\n\n"
-            "2. Check if the PDF has text-based tables (not images)\n"
-            "3. Try a different page range or extraction method\n"
-            "4. Consider using OCR for image-based tables\n\n"
-            "The pipeline cannot continue without extracted tables."
-        )
-        print(error_msg)
-        
-        # Show error in GUI if available
-        try:
-            import matplotlib
-            matplotlib.use('Agg')  # Use non-interactive backend to avoid GUI issues
-            messagebox.showerror("No Tables Extracted", error_msg)
-        except:
-            pass  # GUI not available, error already printed
-        
-        # Exit with error code to indicate failure
-        sys.exit(1)
+# Function alias for extract_main.py import
+extract_tables_with_roi_selection = extract_tables_with_roi_selection_tabula
 
 if __name__ == "__main__":
-    main()
-
-def should_split_dual_column(df):
-    """
-    Determine if a table should be split using dual-column logic.
+    # Add debug output for subprocess execution
+    print("🐛 DEBUG: extract_bom_tab.py started as subprocess")
+    print(f"🐛 DEBUG: BOM_USE_ROI = {os.environ.get('BOM_USE_ROI', 'NOT SET')}")
     
-    Args:
-        df: DataFrame to check
+    # Check if we should run ROI extraction specifically
+    if os.environ.get("BOM_USE_ROI", "false").lower() == "true":
+        print("🎯 Running ROI-specific extraction...")
         
-    Returns:
-        bool: True if this looks like a dual-column BOM table
-    """
-    # Check if this looks like a dual-column BOM
-    if df.shape[1] < 8:
-        return False
-    
-    # Look for header patterns to identify column groups
-    header_row = df.iloc[0] if len(df) > 0 else pd.Series()
-    header_str = ' '.join(str(cell) for cell in header_row)
-    
-    # Find repeated patterns indicating dual columns
-    if 'ITEM' in header_str and header_str.count('ITEM') >= 2:
-        return True
-    
-    return False
-
-def split_dual_column_bom(df):
-    """
-    Split a dual-column BOM table into individual parts.
-    
-    Args:
-        df: DataFrame with side-by-side BOM columns
+        # Get configuration from environment
+        pdf_path = os.environ.get("BOM_PDF_PATH")
+        pages = os.environ.get("BOM_PAGE_RANGE", "all")
         
-    Returns:
-        DataFrame with individual parts in rows
-    """
-    
-    # Check if this looks like a dual-column BOM
-    if df.shape[1] < 8:
-        return df
-    
-    # Look for header patterns to identify column groups
-    header_row = df.iloc[0] if len(df) > 0 else pd.Series()
-    header_str = ' '.join(str(cell) for cell in header_row)
-    
-    print(f"    Table shape: {df.shape}")
-    print(f"    Header row: {header_str}")
-    
-    # Find repeated patterns indicating dual columns
-    if 'ITEM' in header_str and header_str.count('ITEM') >= 2:
-        print("🔍 Detected dual-column BOM table - splitting into individual parts")
+        if not pdf_path:
+            print("❌ No PDF path provided")
+            sys.exit(1)
         
-        # Find the column indices for each side
-        left_cols = []
-        right_cols = []
+        if not os.path.exists(pdf_path):
+            print(f"❌ PDF file not found: {pdf_path}")
+            sys.exit(1)
         
-        # For dual-column BOM, we expect: ITEM, MFG, MFGPART, DESCRIPTION, QTY on each side
-        header_list = [str(cell).strip().upper() for cell in header_row]
-        
-        # Find all ITEM columns (there should be 2)
-        item_positions = [i for i, h in enumerate(header_list) if 'ITEM' in h]
-        print(f"    ITEM positions found: {item_positions}")
-        
-        if len(item_positions) >= 2:
-            # Use the ITEM positions to determine left and right column groups
-            left_start = item_positions[0]
-            right_start = item_positions[1]
+        try:
+            # Run ROI extraction
+            print("🔧 Starting ROI extraction...")
             
-            # Standard BOM columns: ITEM, MFG, MFGPART, DESCRIPTION, QTY
-            left_cols = list(range(left_start, min(left_start + 5, len(header_list))))
-            right_cols = list(range(right_start, min(right_start + 5, len(header_list))))
+            # Debug: Show the PDF being processed
+            print(f"🐛 DEBUG: extract_bom_tab.py processing PDF: {pdf_path}")
+            print(f"🐛 DEBUG: PDF exists: {os.path.exists(pdf_path)}")
             
-            # Remove any columns that don't exist
-            left_cols = [i for i in left_cols if i < len(header_list)]
-            right_cols = [i for i in right_cols if i < len(header_list)]
+            # Check if this is an OCR-processed PDF
+            is_ocr_pdf = "_ocr" in Path(pdf_path).stem
+            print(f"🐛 DEBUG: Is OCR-processed PDF: {is_ocr_pdf}")
             
-            print(f"    Left columns: {left_cols}")
-            print(f"    Right columns: {right_cols}")
+            if is_ocr_pdf:
+                print(f"🔍 DEBUG: OCR-processed PDF detected - tabula ROI extraction will be skipped")
+                print(f"🔍 DEBUG: This should return empty tables to trigger Camelot fallback")
+            else:
+                print(f"🔍 DEBUG: Original PDF - tabula ROI extraction will attempt normally")
             
-            if len(left_cols) >= 4 and len(right_cols) >= 4:
-                # Extract data from both sides
-                left_data = df.iloc[:, left_cols].copy()
-                right_data = df.iloc[:, right_cols].copy()
+            tables = extract_tables_with_roi_selection_tabula(pdf_path, pages)
+            print(f"🔧 ROI extraction completed, found {len(tables) if tables else 0} tables")
+            
+            if tables:
+                print(f"✅ ROI extraction found {len(tables)} tables")
                 
-                # Standardize column names
-                standard_cols = ['ITEM', 'MFG', 'MFGPART', 'DESCRIPTION', 'QTY']
-                left_data.columns = standard_cols[:len(left_data.columns)]
-                right_data.columns = standard_cols[:len(right_data.columns)]
+                # Show table selection interface like the normal workflow
+                if len(tables) > 1:
+                    print("📋 Multiple tables found - showing selection interface...")
+                    from gui.table_selector import show_table_selector
+                    selected_tables = show_table_selector(tables)
+                    
+                    if not selected_tables:
+                        print("❌ No tables selected by user")
+                        sys.stdout.flush()
+                        sys.exit(1)
+                else:
+                    print("📋 Single table found - using automatically...")
+                    selected_tables = tables
                 
-                # Remove header rows and empty rows
-                left_data = left_data[1:].reset_index(drop=True)  # Skip header
-                right_data = right_data[1:].reset_index(drop=True)  # Skip header
+                # Save the selected tables using the main pipeline's merge function
+                print("🔧 Importing merge function...")
+                from pipeline.extract_main import merge_tables_and_export
+                print("🔧 Merge function imported successfully")
                 
-                # Filter out empty rows
-                left_data = left_data[left_data['ITEM'].notna() & (left_data['ITEM'].astype(str).str.strip() != '')].copy()
-                right_data = right_data[right_data['ITEM'].notna() & (right_data['ITEM'].astype(str).str.strip() != '')].copy()
+                # Generate output path
+                pdf_dir = Path(pdf_path).parent
+                pdf_name = Path(pdf_path).stem
+                output_path = pdf_dir / f"{pdf_name}_merged.xlsx"
                 
-                print(f"    Left side: {len(left_data)} parts")
-                print(f"    Right side: {len(right_data)} parts")
+                print(f"🔧 Saving tables to: {output_path}")
+                success = merge_tables_and_export(selected_tables, str(output_path))
+                print(f"🔧 Save result: {success}")
                 
-                # Combine both sides
-                combined_data = pd.concat([left_data, right_data], ignore_index=True)
-                
-                # Clean up the data
-                combined_data = combined_data.dropna(subset=['ITEM'])
-                combined_data = combined_data[combined_data['ITEM'].astype(str).str.strip() != '']
-                
-                print(f"    Combined: {len(combined_data)} parts")
-                
-                return combined_data
-    
-    return df
+                if success:
+                    print(f"✅ Tables saved to: {output_path}")
+                    sys.stdout.flush()  # Ensure output is displayed
+                    sys.exit(0)
+                else:
+                    print("❌ Failed to save tables")
+                    sys.stdout.flush()  # Ensure output is displayed
+                    sys.exit(1)
+            else:
+                print("❌ No tables found with ROI extraction")
+                print("🔄 Tabula ROI extraction complete - returning to orchestrator for Camelot fallback")
+                sys.stdout.flush()  # Ensure output is displayed
+                sys.exit(0)  # Exit with success code to allow orchestrator to try Camelot
+        
+        except Exception as e:
+            print(f"❌ ROI extraction failed: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()  # Ensure output is displayed
+            sys.exit(1)
+    else:
+        # Run full extraction workflow
+        print("🔄 Running full extraction workflow...")
+        from pipeline.extract_main import run_main_extraction_workflow
+        run_main_extraction_workflow()

@@ -24,6 +24,18 @@ def show_review_window(merged_df, parent_window=None):
         pandas DataFrame with any edits made by the user
     """
     print(f"📝 GUI REVIEW: Creating review window for dataframe with shape {merged_df.shape}")
+    print(f"📝 GUI REVIEW: DataFrame columns: {merged_df.columns.tolist()}")
+    print(f"📝 GUI REVIEW: DataFrame dtypes: {merged_df.dtypes.to_dict()}")
+    print(f"📝 GUI REVIEW: DataFrame head:\n{merged_df.head()}")
+    
+    # Validate input
+    if merged_df is None:
+        print("❌ GUI REVIEW: ERROR - merged_df is None!")
+        return None
+    
+    if merged_df.empty:
+        print("❌ GUI REVIEW: ERROR - merged_df is empty!")
+        return merged_df
     
     # Create a new top-level window
     if parent_window:
@@ -67,7 +79,7 @@ def show_review_window(merged_df, parent_window=None):
     # Add table info
     table_info = tk.Label(main_frame, 
                          text=f"📊 Table: {merged_df.shape[0]} rows × {merged_df.shape[1]} columns | "
-                              f"Columns: {', '.join(merged_df.columns.tolist()[:5])}{'...' if len(merged_df.columns) > 5 else ''}",
+                              f"Columns: {', '.join(str(col) for col in merged_df.columns.tolist()[:5])}{'...' if len(merged_df.columns) > 5 else ''}",
                          font=("Arial", 10), bg='white', fg='darkslategray')
     table_info.pack(pady=(0, 10))
     

@@ -91,35 +91,208 @@ def is_pdf_searchable(pdf_path):
     Check if a PDF already has searchable text.
     Returns True if the PDF contains searchable text, False otherwise.
     """
+    # Try multiple PDF reading approaches
+    
+    # Method 1: Try with PyPDF2
     try:
         import PyPDF2
         with open(pdf_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             
-            # Check first few pages for text content
-            text_found = False
-            pages_to_check = min(3, len(pdf_reader.pages))
-            
-            for page_num in range(pages_to_check):
-                page = pdf_reader.pages[page_num]
-                text = page.extract_text().strip()
-                if text and len(text) > 10:  # Meaningful text content
-                    text_found = True
-                    break
-            
-            if text_found:
-                logger.info(f"✅ PDF appears to have searchable text")
-                return True
-            else:
-                logger.info(f"⚠️ PDF appears to be image-based or has no searchable text")
-                return False
+            # Check if PDF has pages and we can access them
+            if hasattr(pdf_reader, 'pages') and len(pdf_reader.pages) > 0:
+                # Check first few pages for text content
+                text_found = False
+                pages_to_check = min(3, len(pdf_reader.pages))
                 
+                for page_num in range(pages_to_check):
+                    try:
+                        # Try to access the page
+                        page = pdf_reader.pages[page_num]
+                        
+                        # Try to extract text
+                        text = page.extract_text()
+                        if text:
+                            text = text.strip()
+                            if len(text) > 10:  # Meaningful text content
+                                text_found = True
+                                break
+                    except (IndexError, AttributeError, TypeError) as e:
+                        logger.warning(f"Could not access page {page_num}: {e}")
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Error extracting text from page {page_num}: {e}")
+                        continue
+                
+                if text_found:
+                    logger.info(f"✅ PDF appears to have searchable text")
+                    return True
+                    
     except ImportError:
-        logger.warning("PyPDF2 not available for text detection, assuming OCR is needed")
-        return False
+        logger.warning("PyPDF2 not available for text detection")
     except Exception as e:
-        logger.warning(f"Could not check if PDF is searchable: {e}")
-        return False
+        logger.warning(f"PyPDF2 method failed: {e}")
+    
+    # Method 2: Try with pdfplumber (often better for text extraction)
+    try:
+        import pdfplumber
+        with pdfplumber.open(pdf_path) as pdf:
+            if pdf.pages:
+                pages_to_check = min(3, len(pdf.pages))
+                for page_num in range(pages_to_check):
+                    try:
+                        page = pdf.pages[page_num]
+                        text = page.extract_text()
+                        if text and len(text.strip()) > 10:
+                            logger.info(f"✅ PDF appears to have searchable text (pdfplumber)")
+                            return True
+                    except Exception as e:
+                        logger.warning(f"pdfplumber error on page {page_num}: {e}")
+                        continue
+                        
+    except ImportError:
+        logger.warning("pdfplumber not available for text detection")
+    except Exception as e:
+        logger.warning(f"pdfplumber method failed: {e}")
+    
+    # Method 3: Try with pymupdf (fitz) - often most robust
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(pdf_path)
+        if doc.page_count > 0:
+            pages_to_check = min(3, doc.page_count)
+            for page_num in range(pages_to_check):
+                try:
+                    page = doc.load_page(page_num)
+                    text = page.get_text()
+                    if text and len(text.strip()) > 10:
+                        logger.info(f"✅ PDF appears to have searchable text (PyMuPDF)")
+                        doc.close()
+                        return True
+                except Exception as e:
+                    logger.warning(f"PyMuPDF error on page {page_num}: {e}")
+                    continue
+        doc.close()
+                    
+    except ImportError:
+        logger.warning("PyMuPDF not available for text detection")
+    except Exception as e:
+        logger.warning(f"PyMuPDF method failed: {e}")
+    
+    # If all methods fail, assume it's image-based
+    logger.info(f"⚠️ PDF appears to be image-based or has no searchable text")
+    return False
+
+def process_pdf_with_ocr(pdf_path, output_path=None, force_ocr=False):
+    """
+    Alias for preprocess_pdf_with_ocr to maintain compatibility.
+    Process a PDF file with OCR to make it searchable.
+    
+    Args:
+        pdf_path (str): Path to the input PDF file
+        output_path (str, optional): Path for the output OCR'd PDF. If None, uses temp file.
+        force_ocr (bool): Force OCR even if PDF appears to have text
+    
+    Returns:
+        str or None: Path to the OCR'd PDF if successful, None if failed
+    """
+    success, ocr_pdf_path, error_message = preprocess_pdf_with_ocr(pdf_path, output_path, force_ocr)
+    
+    if success:
+        return ocr_pdf_path
+    else:
+        logger.error(f"OCR processing failed: {error_message}")
+        return None
+
+def preprocess_pdf_for_table_extraction(pdf_path, output_path=None, enhance_for_tables=True):
+    """
+    Preprocess a PDF specifically for table extraction with enhanced OCR settings.
+    
+    Args:
+        pdf_path: Path to input PDF
+        output_path: Path for output PDF (optional)
+        enhance_for_tables: Apply table-specific enhancements
+    """
+    logger.info(f"🔍 Starting table-optimized OCR preprocessing for: {pdf_path}")
+    
+    if output_path is None:
+        output_path = pdf_path.replace('.pdf', '_ocr_table_enhanced.pdf')
+    
+    # Check if OCRmyPDF is available
+    ocr_available, _, ocr_error = check_ocrmypdf_installation()
+    tesseract_available, _, tesseract_error = check_tesseract_installation()
+    
+    if not ocr_available or not tesseract_available:
+        logger.warning("OCR tools not available - skipping table enhancement")
+        return False, pdf_path, "OCR tools not available"
+    
+    try:
+        import ocrmypdf
+        
+        logger.info("🔧 Applying table-optimized OCR settings...")
+        logger.info("   • Force OCR: True")
+        logger.info("   • Deskew: True") 
+        logger.info("   • Clean: True")
+        logger.info("   • Remove background: True")
+        logger.info("   • High DPI (600): True")
+        if enhance_for_tables:
+            logger.info("   • Table-specific Tesseract settings enabled")
+        
+        # Table-specific OCR configuration
+        tesseract_config = []
+        if enhance_for_tables:
+            # Tesseract PSM (Page Segmentation Mode) for tables
+            # PSM 6: Uniform block of text (good for tables)
+            tesseract_config = [
+                '--psm', '6',           # Uniform block of text
+                '-c', 'preserve_interword_spaces=1',  # Preserve spacing
+                '-c', 'textord_heavy_nr=1',          # Better table detection
+                '-c', 'textord_tabfind_show_vlines=1', # Show vertical lines
+                '-c', 'textord_tabfind_show_columns=1', # Show columns
+                '-c', 'load_system_dawg=0',          # Disable dictionary
+                '-c', 'load_freq_dawg=0',            # Disable frequency dictionary
+                '-c', 'load_punc_dawg=0',            # Disable punctuation dictionary
+                '-c', 'load_number_dawg=0',          # Disable number dictionary
+                '-c', 'load_unambig_dawg=0',         # Disable unambiguous dictionary
+                '-c', 'load_bigram_dawg=0',          # Disable bigram dictionary
+                '-c', 'load_fixed_length_dawgs=0',   # Disable fixed length dictionary
+                '-c', 'wordrec_enable_assoc=0',      # Disable word association
+                '-c', 'textord_single_height_mode=1' # Single height mode for tables
+            ]
+        
+        # Run OCR preprocessing
+        ocrmypdf.ocr(
+            input_file=pdf_path,
+            output_file=output_path,
+            language='eng',
+            deskew=True,
+            clean=True,
+            clean_final=True,
+            remove_background=True,
+            force_ocr=True,  # Force OCR even if text exists
+            redo_ocr=True,   # Redo OCR on existing text
+            optimize=1,      # Light optimization
+            oversample=600,  # High DPI for better table lines
+            image_dpi=600,   # High DPI for embedded images
+            jpeg_quality=95, # High quality
+            png_quality=95,  # High quality
+            tesseract_config=tesseract_config,
+            progress_bar=False,
+            quiet=True
+        )
+        
+        if os.path.exists(output_path):
+            logger.info(f"✅ Table-optimized OCR preprocessing completed: {output_path}")
+            return True, output_path, None
+        else:
+            logger.error("❌ OCR preprocessing failed - output file not created")
+            return False, pdf_path, "Output file not created"
+            
+    except Exception as e:
+        error_msg = f"Table-optimized OCR preprocessing failed: {e}"
+        logger.error(f"❌ {error_msg}")
+        return False, pdf_path, error_msg
+
 
 def preprocess_pdf_with_ocr(pdf_path, output_path=None, force_ocr=False):
     """

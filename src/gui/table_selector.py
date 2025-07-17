@@ -8,6 +8,8 @@ preview capabilities and allows users to select/deselect tables.
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
 import pandas as pd
 from pandastable import Table
 
@@ -72,14 +74,14 @@ def show_table_selector(tables):
         existing_root = tk_module._default_root
         if existing_root and existing_root.winfo_exists():
             # Use Toplevel to avoid conflicts with existing Tk instance
-            root = tk.Toplevel(existing_root)
+            root = ttk.Toplevel(existing_root)
             print("🔧 TABLE SELECTOR: Using Toplevel window (existing Tk root found)")
         else:
             raise Exception("No existing root")
     except:
-        # Create new root window if none exists
-        root = tk.Tk()
-        print("🔧 TABLE SELECTOR: Created new Tk root window")
+        # Create new root window if none exists - use ttkbootstrap for dark theme
+        root = ttk.Window(themename="darkly")
+        print("🔧 TABLE SELECTOR: Created new ttkbootstrap window with dark theme")
     
     root.title("Select Tables to Keep")
     # Maximize window (zoomed) to show minimize/maximize/close buttons
@@ -87,46 +89,43 @@ def show_table_selector(tables):
     # Bind Escape key to minimize window for easy exit
     root.bind('<Escape>', lambda e: root.iconify())
 
-    root.configure(bg='white')
-
-    # No need for complex ttk.Style configuration since we're using pandastable
-    # Keep it simple for any remaining ttk widgets
-    style = ttk.Style()
-    style.theme_use('clam')
-    
-    # Create main frame using grid for full expansion
-    main_frame = tk.Frame(root, bg='white')
-    main_frame.grid(row=0, column=0, sticky='nsew', padx=5, pady=5)  # Reduced padding
+    # Create main frame using ttkbootstrap
+    main_frame = ttk.Frame(root)
+    main_frame.grid(row=0, column=0, sticky='nsew', padx=5, pady=5)
     root.grid_rowconfigure(0, weight=1)
     root.grid_columnconfigure(0, weight=1)
     main_frame.grid_columnconfigure(0, weight=1)
 
-    # Add instructions at the top
-    instructions_frame = tk.Frame(main_frame, bg='white')
+    # Add instructions at the top using ttkbootstrap components
+    instructions_frame = ttk.Frame(main_frame)
     instructions_frame.grid(row=0, column=0, sticky='ew', pady=(0, 10))
 
-    title_label = tk.Label(instructions_frame, text="📋 Table Selection", font=('Arial', 14, 'bold'), bg='white')
+    title_label = ttk.Label(
+        instructions_frame, 
+        text="📋 Table Selection", 
+        font=('Segoe UI', 16, 'bold'),
+        bootstyle="primary"
+    )
     title_label.grid(row=0, column=0, sticky='w')
     
-    instructions_label = tk.Label(
+    instructions_label = ttk.Label(
         instructions_frame, 
         text="Please review the tables below and CHECK the ones you want to include in the final output.\n"
              "⚠️  All tables start UNSELECTED - you must check the boxes for tables you want to keep.",
-        font=('Arial', 10),
-        foreground='blue',
-        bg='white',
+        font=('Segoe UI', 10),
+        bootstyle="info",
         justify=tk.LEFT
     )
     instructions_label.grid(row=1, column=0, sticky='w', pady=(5, 10))
     
     # Control buttons frame
-    control_frame = tk.Frame(main_frame, bg='white')
+    control_frame = ttk.Frame(main_frame)
     control_frame.grid(row=1, column=0, sticky='ew', pady=(0, 10))
 
-    # Create a canvas and scrollbar for the table area
-    canvas = tk.Canvas(main_frame, bg='white')
+    # Create a canvas and scrollbar for the table area using ttkbootstrap
+    canvas = tk.Canvas(main_frame)
     scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-    scrollable_frame = tk.Frame(canvas, bg='white')
+    scrollable_frame = ttk.Frame(canvas)
 
     def on_frame_configure(event):
         """Update scrollregion when frame content changes"""
@@ -167,40 +166,53 @@ def show_table_selector(tables):
 
     var_list = []
     for i, table in enumerate(tables):
-        # Create a frame for each table in the scrollable frame
-        frame = tk.LabelFrame(scrollable_frame, text=f"Table {i+1}", bg='white', font=('Arial', 12, 'bold'))
-        frame.grid(row=i, column=0, sticky='ew', padx=5, pady=5)  # Reduced padding
-        scrollable_frame.grid_rowconfigure(i, weight=0)  # Don't expand individual table frames
+        # Create a frame for each table in the scrollable frame using ttkbootstrap
+        frame = ttk.LabelFrame(
+            scrollable_frame, 
+            text=f"Table {i+1}", 
+            padding=10,
+            bootstyle="primary"
+        )
+        frame.grid(row=i, column=0, sticky='ew', padx=5, pady=5)
+        scrollable_frame.grid_rowconfigure(i, weight=0)
 
         # Configure the frame to expand horizontally
         frame.grid_columnconfigure(0, weight=1)
 
         # Handle empty tables but still add a checkbox variable to maintain index alignment
         if table.empty:
-            # Create a simple label for empty table with better styling
-            empty_frame = tk.Frame(frame, bg='#f8f9fa', relief='ridge', bd=1)
+            # Create a simple label for empty table with dark theme styling
+            empty_frame = ttk.Frame(frame, bootstyle="secondary")
             empty_frame.pack(fill='both', expand=True, padx=5, pady=5)
             
-            empty_label = tk.Label(empty_frame, text="📭 Empty Table", 
-                                 bg='#f8f9fa', font=('Arial', 12), fg='gray')
+            empty_label = ttk.Label(
+                empty_frame, 
+                text="📭 Empty Table", 
+                font=('Segoe UI', 12),
+                bootstyle="secondary"
+            )
             empty_label.pack(expand=True, pady=20)
             
             # Add info about the empty table
-            info_label = tk.Label(frame, text="Rows: 0, Columns: 0", bg='white', font=('Arial', 9))
+            info_label = ttk.Label(
+                frame, 
+                text="Rows: 0, Columns: 0", 
+                font=('Segoe UI', 9),
+                bootstyle="secondary"
+            )
             info_label.pack(anchor="w", padx=5, pady=2)
             
             # Still add a checkbox variable for empty tables to maintain index alignment
-            var = tk.BooleanVar(master=root, value=False)  # Default to unchecked for empty tables
+            var = tk.BooleanVar(master=root, value=False)
             # Create a simple frame for the checkbox
-            checkbox_frame = tk.Frame(frame, bg='white')
+            checkbox_frame = ttk.Frame(frame)
             checkbox_frame.pack(anchor="w", padx=5, pady=5)
-            cb = tk.Checkbutton(
+            cb = ttk.Checkbutton(
                 checkbox_frame, 
                 text="Select this table (empty)", 
                 variable=var, 
-                font=('Arial', 11), 
-                state='disabled',
-                bg='white'
+                bootstyle="secondary",
+                state='disabled'
             )
             cb.pack(anchor="w")
             var_list.append(var)
@@ -214,8 +226,8 @@ def show_table_selector(tables):
         display_table = table.head(max_rows_to_show) if len(table) > max_rows_to_show else table
         
         # Create a frame for the table with proper configuration using pandastable
-        table_frame = tk.Frame(frame, bg='white', height=600)  # Increased height for better visibility
-        table_frame.pack(fill='both', expand=True, padx=2, pady=2)  # Reduced padding
+        table_frame = ttk.Frame(frame, height=600)
+        table_frame.pack(fill='both', expand=True, padx=2, pady=2)
         table_frame.pack_propagate(False)  # Don't shrink the frame
         
         # Configure table_frame grid weights
@@ -460,54 +472,46 @@ def show_table_selector(tables):
                 text_widget.configure(state='disabled')
                 
                 # Add a label to show this is text fallback
-                fallback_label = tk.Label(frame, 
-                                        text="⚠️ Using text display (table widgets not available)",
-                                        font=("Arial", 9), fg='orange', bg='white')
+                fallback_label = ttk.Label(
+                    frame, 
+                    text="⚠️ Using text display (table widgets not available)",
+                    font=("Segoe UI", 9), 
+                    bootstyle="warning"
+                )
                 fallback_label.pack(pady=(5, 0))
                 
                 print(f"🔧 TABLE DISPLAY: Created text fallback successfully")
         
-        # Add note if table was truncated and show sample data preview
-        if len(table) > max_rows_to_show:
-            info_text = f"Rows: {len(table)} (showing first {max_rows_to_show}), Columns: {len(table.columns)}"
-        else:
-            info_text = f"Rows: {len(table)}, Columns: {len(table.columns)}"
+        # Add table info display for non-empty tables
+        if not table.empty:
+            info_text = f"Rows: {table.shape[0]}, Columns: {table.shape[1]}"
+            if len(table) > max_rows_to_show:
+                info_text += f" (showing first {max_rows_to_show} rows)"
+            
+            info_label = ttk.Label(
+                frame, 
+                text=info_text, 
+                font=('Segoe UI', 9),
+                bootstyle="secondary"
+            )
+            info_label.pack(anchor="w", padx=5, pady=2)
         
-        # Add a preview of the first few cell values to help identify the table content
-        if len(table) > 0:
-            sample_values = []
-            for col in orig_columns[:3]:  # Show first 3 columns
-                if col in table.columns:  # Make sure column exists
-                    first_val = str(table[col].iloc[0]) if pd.notna(table[col].iloc[0]) else ""
-                    if len(first_val) > 20:
-                        first_val = first_val[:17] + "..."
-                    sample_values.append(f"{col}: {first_val}")
-            if sample_values:  # Only add preview if we have values
-                info_text += f" | Preview: {', '.join(sample_values)}"
-
-        # Add summary info with preview
-        info_label = tk.Label(frame, text=info_text, bg='white', font=('Arial', 9), 
-                             fg='darkblue', wraplength=800, justify='left')
-        info_label.pack(anchor="w", padx=5, pady=2)
-
-        # Checkbox to select/deselect table - Fix parent window association
-        var = tk.BooleanVar(master=root, value=False)  # Explicitly set master to root window
+        # Checkbox to select/deselect table with ttkbootstrap styling
+        var = tk.BooleanVar(master=root, value=False)
         
         # Add a callback to test checkbox functionality
         def checkbox_callback():
             print(f"DEBUG: Checkbox {len(var_list)} clicked! New value: {var.get()}")
         
         # Create a simple frame for the checkbox
-        checkbox_frame = tk.Frame(frame, bg='white')  # Ensure consistent background
+        checkbox_frame = ttk.Frame(frame)
         checkbox_frame.pack(anchor="w", padx=5, pady=5)
-        cb = tk.Checkbutton(
+        cb = ttk.Checkbutton(
             checkbox_frame, 
             text="Select this table", 
             variable=var, 
-            font=('Arial', 11),
-            bg='white',  # Match background
-            activebackground='white',  # Consistent when clicked
-            command=checkbox_callback  # Add callback for testing
+            bootstyle="success",
+            command=checkbox_callback
         )
         cb.pack(anchor="w")
         var_list.append(var)
@@ -534,29 +538,44 @@ def show_table_selector(tables):
                 print(f"DEBUG: Error clearing checkbox {i+1}: {e}")
     
     # Add the buttons now that the functions are properly defined
-    select_all_btn = tk.Button(control_frame, text="✓ Select All", command=select_all, bg='lightgreen', font=('Arial', 10))
+    select_all_btn = ttk.Button(
+        control_frame, 
+        text="✓ Select All", 
+        command=select_all, 
+        bootstyle="success",
+        width=12
+    )
     select_all_btn.grid(row=0, column=0, padx=5)
     
-    clear_all_btn = tk.Button(control_frame, text="✗ Clear All", command=clear_all, bg='lightcoral', font=('Arial', 10))
+    clear_all_btn = ttk.Button(
+        control_frame, 
+        text="✗ Clear All", 
+        command=clear_all, 
+        bootstyle="danger",
+        width=12
+    )
     clear_all_btn.grid(row=0, column=1, padx=5)
 
     # Continue button
-    button_frame = tk.Frame(main_frame, bg='white')
-    button_frame.grid(row=3, column=0, sticky='ew', padx=5, pady=10)  # Reduced padding
+    button_frame = ttk.Frame(main_frame)
+    button_frame.grid(row=3, column=0, sticky='ew', padx=5, pady=10)
     
-    continue_button = tk.Button(
+    continue_button = ttk.Button(
         button_frame, 
         text="🚀 Continue with Selected Tables", 
         command=on_submit,
-        bg='lightblue',
-        font=('Arial', 12, 'bold'),
-        padx=20,
-        pady=10
+        bootstyle="primary",
+        width=30
     )
     continue_button.grid(row=0, column=0)
     
     # Add a label showing current selection count
-    selection_label = tk.Label(button_frame, text="No tables selected", foreground='red', bg='white', font=('Arial', 10))
+    selection_label = ttk.Label(
+        button_frame, 
+        text="No tables selected", 
+        bootstyle="danger",
+        font=('Segoe UI', 10)
+    )
     selection_label.grid(row=1, column=0, pady=(10, 0))
     
     def update_selection_count():
@@ -564,11 +583,11 @@ def show_table_selector(tables):
         try:
             count = sum(var.get() for var in var_list)
             if count == 0:
-                selection_label.config(text="⚠️  No tables selected", foreground='red')
+                selection_label.config(text="⚠️  No tables selected", bootstyle="danger")
             elif count == 1:
-                selection_label.config(text="✓ 1 table selected", foreground='green')
+                selection_label.config(text="✓ 1 table selected", bootstyle="success")
             else:
-                selection_label.config(text=f"✓ {count} tables selected", foreground='green')
+                selection_label.config(text=f"✓ {count} tables selected", bootstyle="success")
             
             # Debug output every 10th update to avoid spam
             if hasattr(update_selection_count, 'debug_counter'):
@@ -581,7 +600,7 @@ def show_table_selector(tables):
             
         except Exception as e:
             print(f"DEBUG: Error in update_selection_count: {e}")
-            selection_label.config(text="⚠️  Error reading selections", foreground='red')
+            selection_label.config(text="⚠️  Error reading selections", bootstyle="danger")
         
         # Schedule next update
         root.after(500, update_selection_count)

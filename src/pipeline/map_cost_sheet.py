@@ -106,12 +106,160 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
             print("⚠️ ITEM column not found in merged file. Skipping item number.")
             df_oem["ITEM"] = ""
 
+    # Pull additional columns from merged file for Riley Power format
+    if user_company == "riley power":
+        # Pull MANUFACTURER from merged file
+        if "MANUFACTURER" in df_merged.columns:
+            df_oem["MANUFACTURER"] = df_merged["MANUFACTURER"]
+            print("✅ Added MANUFACTURER column from merged file (Riley Power format)")
+        else:
+            print("⚠️ MANUFACTURER column not found in merged file. Skipping manufacturer.")
+            df_oem["MANUFACTURER"] = ""
+        
+        # Pull QTY (quantity) from merged file
+        if "QTY" in df_merged.columns:
+            df_oem["QTY"] = df_merged["QTY"]
+            print("✅ Added QTY column from merged file (Riley Power format)")
+        else:
+            print("⚠️ QTY column not found in merged file. Skipping quantity.")
+            df_oem["QTY"] = ""
+        
+        # Pull MPN (part number) from merged file
+        if "MPN" in df_merged.columns:
+            df_oem["MPN"] = df_merged["MPN"]
+            print("✅ Added MPN column from merged file (Riley Power format)")
+        else:
+            print("⚠️ MPN column not found in merged file. Skipping part number.")
+            df_oem["MPN"] = ""
+        
+        # Pull ITEM from merged file
+        if "ITEM" in df_merged.columns:
+            df_oem["ITEM"] = df_merged["ITEM"]
+            print("✅ Added ITEM column from merged file (Riley Power format)")
+        else:
+            print("⚠️ ITEM column not found in merged file. Skipping item number.")
+            df_oem["ITEM"] = ""
+
+    # Pull additional columns from merged file for Shanklin format
+    if user_company == "shanklin":
+        # Pull MPN (part number) from merged file
+        if "MPN" in df_merged.columns:
+            df_oem["MPN"] = df_merged["MPN"]
+            print("✅ Added MPN column from merged file (Shanklin format)")
+        else:
+            print("⚠️ MPN column not found in merged file. Skipping part number.")
+            df_oem["MPN"] = ""
+        
+        # Pull QTY (quantity) from merged file
+        if "QTY" in df_merged.columns:
+            df_oem["QTY"] = df_merged["QTY"]
+            print("✅ Added QTY column from merged file (Shanklin format)")
+        else:
+            print("⚠️ QTY column not found in merged file. Skipping quantity.")
+            df_oem["QTY"] = ""
+        
+        # Pull ITEM from merged file
+        if "ITEM" in df_merged.columns:
+            df_oem["ITEM"] = df_merged["ITEM"]
+            print("✅ Added ITEM column from merged file (Shanklin format)")
+        else:
+            print("⚠️ ITEM column not found in merged file. Skipping item number.")
+            df_oem["ITEM"] = ""
+
+    # Pull additional columns from merged file for 901D format
+    if user_company == "901d":
+        # Pull MPN (part number) from merged file
+        if "MPN" in df_merged.columns:
+            df_oem["MPN"] = df_merged["MPN"]
+            print("✅ Added MPN column from merged file (901D format)")
+        else:
+            print("⚠️ MPN column not found in merged file. Skipping part number.")
+            df_oem["MPN"] = ""
+        
+        # Pull QTY (quantity) from merged file
+        if "QTY" in df_merged.columns:
+            df_oem["QTY"] = df_merged["QTY"]
+            print("✅ Added QTY column from merged file (901D format)")
+        else:
+            print("⚠️ QTY column not found in merged file. Skipping quantity.")
+            df_oem["QTY"] = ""
+        
+        # Pull MFR (manufacturer) from merged file
+        if "MFR" in df_merged.columns:
+            df_oem["MFR"] = df_merged["MFR"]
+            print("✅ Added MFR column from merged file (901D format)")
+        else:
+            print("⚠️ MFR column not found in merged file. Skipping manufacturer.")
+            df_oem["MFR"] = ""
+        
+        # Pull FIND NO. (item number) from merged file
+        if "FIND NO." in df_merged.columns:
+            df_oem["FIND NO."] = df_merged["FIND NO."]
+            print("✅ Added FIND NO. column from merged file (901D format)")
+        else:
+            print("⚠️ FIND NO. column not found in merged file. Skipping item number.")
+            df_oem["FIND NO."] = ""
+        
+        # Pull 901D P/N (customer part number) from merged file
+        if "901D P/N" in df_merged.columns:
+            df_oem["901D P/N"] = df_merged["901D P/N"]
+            print("✅ Added 901D P/N column from merged file (901D format)")
+        else:
+            print("⚠️ 901D P/N column not found in merged file. Skipping customer part number.")
+            df_oem["901D P/N"] = ""
+
+    # Pull additional columns from merged file for Amazon format
+    if user_company == "amazon":
+        # Pull Part number from merged file
+        if "Part number" in df_merged.columns:
+            df_oem["Part number"] = df_merged["Part number"]
+            print("✅ Added Part number column from merged file (Amazon format)")
+        else:
+            print("⚠️ Part number column not found in merged file. Skipping part number.")
+            df_oem["Part number"] = ""
+        
+        # Pull QTY (quantity) from merged file
+        if "QTY" in df_merged.columns:
+            df_oem["QTY"] = df_merged["QTY"]
+            print("✅ Added QTY column from merged file (Amazon format)")
+        else:
+            print("⚠️ QTY column not found in merged file. Skipping quantity.")
+            df_oem["QTY"] = ""
+        
+        # Pull Manufacturer from merged file
+        if "Manufacturer" in df_merged.columns:
+            df_oem["Manufacturer"] = df_merged["Manufacturer"]
+            print("✅ Added Manufacturer column from merged file (Amazon format)")
+        else:
+            print("⚠️ Manufacturer column not found in merged file. Skipping manufacturer.")
+            df_oem["Manufacturer"] = ""
+        
+        # Pull Device tag (item number) from merged file
+        if "Device tag" in df_merged.columns:
+            df_oem["Device tag"] = df_merged["Device tag"]
+            print("✅ Added Device tag column from merged file (Amazon format)")
+        else:
+            print("⚠️ Device tag column not found in merged file. Skipping item number.")
+            df_oem["Device tag"] = ""
+        
+        # Pull Distributor from merged file for supplier notes
+        if "Distributor" in df_merged.columns:
+            df_oem["Distributor"] = df_merged["Distributor"]
+            print("✅ Added Distributor column from merged file (Amazon format)")
+        else:
+            print("⚠️ Distributor column not found in merged file. Skipping distributor.")
+            df_oem["Distributor"] = ""
+
     # Detect company format based on column names
     oem_columns = df_oem.columns.tolist()
     merged_columns = df_merged.columns.tolist()
     
     print(f"📊 OEM file columns: {oem_columns}")
     print(f"📊 Merged file columns: {merged_columns}")
+    
+    # Debug: Check for price column variations
+    price_columns = [col for col in oem_columns if 'price' in col.lower() or 'cost' in col.lower() or 'usd' in col.lower()]
+    print(f"💰 Price-related columns found: {price_columns}")
     
     # Use user's selected company for mapping instead of auto-detection
     if user_company == "nel":
@@ -136,7 +284,68 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
             "MFG": "MFR",
             "MPN": "COMMERCIAL PART#",
             "QTY": "UNIT QTY",
+            "Quantity for Single BOM": "UNIT QTY",  # From OEMsecrets output
             "Unit Price in USD": "COST EACH",
+            "Lead Time on Additional Stock in Weeks": "LEAD TIME (WEEKS)",
+            "Notes": "SUPPLIER / NOTES",
+            "DESCRIPTION": "DESCRIPTION"
+        }
+    elif user_company == "riley power":
+        print("📊 Using Riley Power format - based on user selection")
+        column_mapping = {
+            "ITEM": "ITEM",
+            "MANUFACTURER": "MFR",  # Use MANUFACTURER from merged file
+            "MPN": "COMMERCIAL PART#",  # Use MPN from merged file (converted from Part Number)
+            "QTY": "UNIT QTY",  # Use QTY from merged file (converted from Quantity for Single BOM)
+            "Quantity for Single BOM": "UNIT QTY",  # From OEMsecrets output
+            "Unit Price in USD": "COST EACH",
+            "Lead Time on Additional Stock in Weeks": "LEAD TIME (WEEKS)",
+            "Notes": "SUPPLIER / NOTES",
+            "DESCRIPTION": "DESCRIPTION"
+        }
+    elif user_company == "shanklin":
+        print("📊 Using Shanklin format - based on user selection")
+        column_mapping = {
+            "ITEM": "ITEM",
+            "MPN": "COMMERCIAL PART#",  # Use MPN from merged file
+            "QTY": "UNIT QTY",  # Use QTY from merged file
+            "Quantity for Single BOM": "UNIT QTY",  # From OEMsecrets output
+            "Unit Price in USD": "COST EACH",
+            "Lead Time on Additional Stock in Weeks": "LEAD TIME (WEEKS)",
+            "Notes": "SUPPLIER / NOTES",
+            "DESCRIPTION": "DESCRIPTION"
+        }
+    elif user_company == "901d":
+        print("📊 Using 901D format - based on user selection")
+        column_mapping = {
+            "FIND NO.": "ITEM",  # Use FIND NO. from merged file as item number
+            "901D P/N": "CUST PART #",  # Use 901D P/N from merged file as customer part number
+            "MFR": "MFR",  # Use MFR from merged file
+            "MPN": "COMMERCIAL PART#",  # Use MPN from merged file
+            "QTY": "UNIT QTY",  # Use QTY from merged file  
+            "Quantity for Single BOM": "UNIT QTY",  # From OEMsecrets output
+            "Unit Price in USD": "COST EACH",
+            "Unit Price": "COST EACH",  # Alternative price column name
+            "Price": "COST EACH",  # Alternative price column name
+            "Cost": "COST EACH",  # Alternative price column name
+            "Distributor": "SUPPLIER / NOTES",  # Map distributor to supplier field
+            "Lead Time on Additional Stock in Weeks": "LEAD TIME (WEEKS)",
+            "Notes": "SUPPLIER / NOTES",
+            "DESCRIPTION": "DESCRIPTION"
+        }
+    elif user_company == "amazon":
+        print("📊 Using Amazon format - based on user selection")
+        column_mapping = {
+            "Device tag": "ITEM",  # Use Device tag from merged file as item number
+            "QTY": "UNIT QTY",  # Use QTY from merged file
+            "Manufacturer": "MFR",  # Use Manufacturer from merged file
+            "Part number": "COMMERCIAL PART#",  # Use Part number from merged file
+            "Quantity for Single BOM": "UNIT QTY",  # From OEMsecrets output
+            "Unit Price in USD": "COST EACH",
+            "Unit Price": "COST EACH",  # Alternative price column name
+            "Price": "COST EACH",  # Alternative price column name
+            "Cost": "COST EACH",  # Alternative price column name
+            "Distributor": "SUPPLIER / NOTES",  # Map distributor to supplier field
             "Lead Time on Additional Stock in Weeks": "LEAD TIME (WEEKS)",
             "Notes": "SUPPLIER / NOTES",
             "DESCRIPTION": "DESCRIPTION"
@@ -149,7 +358,11 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
             "Manufacturer": "MFR",
             "MPN": "COMMERCIAL PART#",
             "Quantity": "UNIT QTY",
+            "Quantity for Single BOM": "UNIT QTY",  # From OEMsecrets output
             "Unit Price in USD": "COST EACH",
+            "Unit Price": "COST EACH",  # Alternative price column name
+            "Price": "COST EACH",  # Alternative price column name
+            "Cost": "COST EACH",  # Alternative price column name
             "Lead Time on Additional Stock in Weeks": "LEAD TIME (WEEKS)",
             "Notes": "SUPPLIER / NOTES",
             "DESCRIPTION": "DESCRIPTION"
@@ -157,13 +370,45 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
 
     print(f"📊 Using column mapping: {column_mapping}")
 
-    df_renamed = df_oem.rename(columns={k: v for k, v in column_mapping.items() if k in df_oem.columns})
-    mapped_columns = list(column_mapping.values())
-    df_out = df_renamed[[col for col in mapped_columns if col in df_renamed.columns]].copy()
+    # Debug: Show which columns are actually being mapped
+    columns_found = {k: v for k, v in column_mapping.items() if k in df_oem.columns}
+    columns_missing = {k: v for k, v in column_mapping.items() if k not in df_oem.columns}
+    print(f"✅ Columns found for mapping: {columns_found}")
+    print(f"❌ Columns missing from OEM file: {columns_missing}")
 
-    # Fill any remaining NaN values with "N/A" to ensure consistency
-    df_out = df_out.fillna("N/A")
-    df_out = df_out.replace("", "N/A")
+    # Create a clean mapping that avoids duplicates - take only the first source for each target
+    clean_mapping = {}
+    for source_col, target_col in column_mapping.items():
+        if source_col in df_oem.columns:
+            if target_col not in clean_mapping.values():
+                clean_mapping[source_col] = target_col
+            else:
+                print(f"⚠️ Skipping duplicate mapping: {source_col} -> {target_col} (already mapped)")
+    
+    print(f"📊 Clean mapping (no duplicates): {clean_mapping}")
+    
+    # Apply the clean mapping
+    df_renamed = df_oem.rename(columns=clean_mapping)
+    
+    # Get all the target column names we want to keep
+    mapped_target_columns = list(clean_mapping.values())
+    df_out = df_renamed[mapped_target_columns].copy()
+    
+    print(f"📊 df_out shape after selection: {df_out.shape}")
+    print(f"📊 df_out columns: {list(df_out.columns)}")
+
+    # Handle missing values carefully - preserve numeric columns
+    for col in df_out.columns:
+        if col == "COST EACH":
+            # For cost column, preserve numeric values but replace true NaN with 0
+            print(f"💰 Processing COST EACH column...")
+            print(f"💰 COST EACH sample values: {df_out[col].head().tolist()}")
+            df_out[col] = pd.to_numeric(df_out[col], errors='coerce').fillna(0)
+            print(f"💰 COST EACH after processing: {df_out[col].tolist()}")
+        else:
+            # For other columns, replace NaN with "N/A"
+            df_out[col] = df_out[col].fillna("N/A")
+            df_out[col] = df_out[col].replace("", "N/A")
 
     # Add ITEM numbers (sequential numbering)
     if "ITEM" not in df_out.columns:
@@ -173,6 +418,10 @@ def map_and_insert_data(oem_path, merged_path, template_path=OMNI_TEMPLATE_PATH)
     print(f"📊 Final columns: {df_out.columns.tolist()}")
     if len(df_out) > 0:
         print(f"📊 Sample data:\n{df_out.head(2)}")
+        # Debug: Show actual COST EACH values
+        if "COST EACH" in df_out.columns:
+            print(f"💰 COST EACH values: {df_out['COST EACH'].tolist()}")
+            print(f"💰 COST EACH data types: {df_out['COST EACH'].dtype}")
 
     # Validate template file exists before trying to load it
     if not template_path.exists():
@@ -237,6 +486,23 @@ def main():
     """Main function to be called by the pipeline."""
     oem_path = os.environ.get("OEM_INPUT_PATH")
     merged_path = os.environ.get("MERGED_BOM_PATH")
+    
+    print(f"🐛 DEBUG: Environment variables:")
+    print(f"  OEM_INPUT_PATH: {oem_path}")
+    print(f"  MERGED_BOM_PATH: {merged_path}")
+    print(f"  OEM file exists: {os.path.exists(oem_path) if oem_path else False}")
+    print(f"  Merged file exists: {os.path.exists(merged_path) if merged_path else False}")
+    
+    if oem_path and os.path.exists(oem_path):
+        # Quick check of what's in the OEM file
+        try:
+            import pandas as pd
+            df_test = pd.read_excel(oem_path)
+            print(f"🐛 DEBUG: OEM file '{oem_path}' has {df_test.shape[0]} rows and {df_test.shape[1]} columns")
+            print(f"🐛 DEBUG: OEM file columns: {list(df_test.columns)}")
+        except Exception as e:
+            print(f"🐛 DEBUG: Error reading OEM file: {e}")
+    
     map_and_insert_data(oem_path, merged_path)
 
 if __name__ == "__main__":

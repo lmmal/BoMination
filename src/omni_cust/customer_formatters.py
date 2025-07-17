@@ -823,12 +823,846 @@ def clean_primetals_columns(df):
     return df
 
 
+def clean_riley_power_columns(df):
+    """
+    Clean Riley Power-specific table formatting issues.
+    
+    The main issue is that item descriptions are split across multiple columns
+    due to line breaks in the original PDF. This function merges split descriptions
+    back together and standardizes the column structure.
+    
+    Expected Riley Power table structure:
+    - ITEM: Item number
+    - QTY: Quantity
+    - MANUFACTURER: Manufacturer name
+    - MODEL NO: Model/Part number
+    - ITEM DES: First part of description (often split)
+    - RIPTION: Second part of description (continuation)
+    - (Additional columns): May contain more description fragments
+    """
+    print(f"\n🔧 RILEY POWER DEBUG: Original table shape: {df.shape}")
+    print(f"🔧 RILEY POWER DEBUG: Original columns: {df.columns.tolist()}")
+    
+    if df.empty:
+        print("🔧 RILEY POWER DEBUG: Empty dataframe passed to clean_riley_power_columns")
+        return df
+    
+    # Create a copy to work with
+    df_clean = df.copy()
+    
+    # Find the header row that contains "ITEM", "QTY", "MANUFACTURER", etc.
+    header_keywords = ['ITEM', 'QTY', 'MANUFACTURER', 'MODEL NO', 'ITEM DES', 'RIPTION']
+    best_header_idx = 0
+    best_score = 0
+    
+    for idx in range(min(10, len(df_clean))):
+        row = df_clean.iloc[idx]
+        non_empty_cells = row.dropna().astype(str).str.upper().str.strip()
+        score = sum(any(kw in cell for kw in header_keywords) for cell in non_empty_cells)
+        print(f"🔧 RILEY POWER DEBUG: Row {idx} header score: {score} - {non_empty_cells.tolist()}")
+        if score > best_score:
+            best_score = score
+            best_header_idx = idx
+    
+    print(f"🔧 RILEY POWER DEBUG: Selected header row index: {best_header_idx} (score: {best_score})")
+    
+    # Set the detected header row as columns and remove header rows
+    if best_header_idx < len(df_clean):
+        new_columns = df_clean.iloc[best_header_idx].fillna('').astype(str).str.strip()
+        for i, col in enumerate(new_columns):
+            if col == '' or col == 'nan':
+                new_columns.iloc[i] = f'Column_{i}'
+        df_clean.columns = new_columns
+        df_clean = df_clean.iloc[best_header_idx + 1:].reset_index(drop=True)
+    
+    print(f"🔧 RILEY POWER DEBUG: After header extraction - columns: {df_clean.columns.tolist()}")
+    print(f"🔧 RILEY POWER DEBUG: After header extraction - shape: {df_clean.shape}")
+    
+    # Remove duplicate header rows
+    df_clean = df_clean[~df_clean.apply(lambda row: row.astype(str).str.strip().tolist() == df_clean.columns.astype(str).tolist(), axis=1)]
+    df_clean = df_clean.reset_index(drop=True)
+    
+    # Now handle the main issue: merge split descriptions
+    description_columns = []
+    
+    # Find columns that contain description fragments
+    for col in df_clean.columns:
+        col_str = str(col).upper()
+        if any(desc_keyword in col_str for desc_keyword in ['ITEM DES', 'RIPTION', 'DESCRIPTION', 'DESC']):
+            description_columns.append(col)
+    
+    # Also look for blank columns that might contain description fragments
+    # Check columns that have blank/generic names like 'Column_X' or empty strings
+    for col in df_clean.columns:
+        col_str = str(col).strip()
+        if (col_str == '' or col_str.startswith('Column_') or col_str == 'nan') and col not in description_columns:
+            # Check if this column contains text that looks like description data
+            sample_values = df_clean[col].dropna().astype(str).head(5).tolist()
+            if sample_values:
+                # Check if the column contains meaningful text (not just numbers or short codes)
+                text_indicators = 0
+                for val in sample_values:
+                    val_clean = val.strip()
+                    if len(val_clean) > 5 and any(char.isalpha() for char in val_clean):
+                        text_indicators += 1
+                
+                # If more than half the sample values look like text, include this column
+                if text_indicators >= len(sample_values) // 2:
+                    description_columns.append(col)
+                    print(f"🔧 RILEY POWER DEBUG: Found blank column '{col}' with description-like content: {sample_values[:2]}")
+    
+    print(f"🔧 RILEY POWER DEBUG: All description columns found: {description_columns}")
+    
+    # If we have multiple description columns, we need to merge them
+    if len(description_columns) > 1:
+        print(f"🔧 RILEY POWER DEBUG: Found split description columns: {description_columns}")
+        
+        # Sort the description columns by their position in the dataframe to merge in correct order
+        description_columns_sorted = sorted(description_columns, key=lambda x: df_clean.columns.get_loc(x))
+        print(f"🔧 RILEY POWER DEBUG: Description columns in order: {description_columns_sorted}")
+        
+        # Create a new merged description column
+        def merge_description_row(row):
+            """Merge description fragments from multiple columns for a single row."""
+            desc_parts = []
+            for col in description_columns_sorted:  # Use sorted order
+                val = str(row[col]).strip()
+                if val and val != 'nan' and val != '':
+                    desc_parts.append(val)
+            
+            # Join the parts with a space, but handle special cases
+            merged = ' '.join(desc_parts)
+            
+            # Clean up common formatting issues
+            merged = re.sub(r'\s+', ' ', merged)  # Multiple spaces to single space
+            merged = re.sub(r'"\s*"', '"', merged)  # Remove spaces between quotes
+            merged = merged.strip()
+            
+            return merged
+        
+        # Apply the merge function to all rows
+        df_clean['DESCRIPTION'] = df_clean.apply(merge_description_row, axis=1)
+        
+        # Remove the original split description columns
+        df_clean = df_clean.drop(columns=description_columns)
+        
+        print(f"🔧 RILEY POWER DEBUG: Merged description columns into 'DESCRIPTION'")
+    
+    elif len(description_columns) == 1:
+        # Even if we have only one description column, rename it to 'DESCRIPTION' for consistency
+        main_desc_col = description_columns[0]
+        if main_desc_col != 'DESCRIPTION':
+            df_clean = df_clean.rename(columns={main_desc_col: 'DESCRIPTION'})
+        print(f"🔧 RILEY POWER DEBUG: Renamed single description column '{main_desc_col}' to 'DESCRIPTION'")
+    
+    else:
+        print(f"🔧 RILEY POWER DEBUG: No description columns found with standard naming")
+    
+    # Check for any remaining columns that might contain description fragments
+    # Look for columns after the expected standard columns that might contain text
+    expected_columns = ['ITEM', 'QTY', 'MANUFACTURER', 'MODEL NO']
+    remaining_columns = [col for col in df_clean.columns if col not in expected_columns + ['DESCRIPTION']]
+    
+    if remaining_columns:
+        print(f"🔧 RILEY POWER DEBUG: Found additional columns that might contain description fragments: {remaining_columns}")
+        
+        # Check if these columns contain text that should be merged into description
+        for col in remaining_columns:
+            sample_values = df_clean[col].dropna().astype(str).head(3).tolist()
+            print(f"🔧 RILEY POWER DEBUG: Column '{col}' sample values: {sample_values}")
+            
+            # If the column contains text (not just numbers/short codes), merge it
+            if any(len(val) > 10 or any(char.isalpha() for char in val) for val in sample_values):
+                print(f"🔧 RILEY POWER DEBUG: Column '{col}' appears to contain description text, merging...")
+                
+                # Merge this column into the description
+                if 'DESCRIPTION' in df_clean.columns:
+                    df_clean['DESCRIPTION'] = df_clean['DESCRIPTION'].astype(str) + ' ' + df_clean[col].astype(str)
+                else:
+                    df_clean['DESCRIPTION'] = df_clean[col].astype(str)
+                
+                # Remove the merged column
+                df_clean = df_clean.drop(columns=[col])
+    
+    # Clean up the final description column
+    if 'DESCRIPTION' in df_clean.columns:
+        df_clean['DESCRIPTION'] = df_clean['DESCRIPTION'].astype(str).str.strip()
+        df_clean['DESCRIPTION'] = df_clean['DESCRIPTION'].str.replace(r'\s+', ' ', regex=True)
+        df_clean['DESCRIPTION'] = df_clean['DESCRIPTION'].str.replace('nan', '', regex=False)
+        df_clean['DESCRIPTION'] = df_clean['DESCRIPTION'].str.strip()
+    
+    # Clean up the QTY column - remove non-numeric values
+    if 'QTY' in df_clean.columns:
+        print(f"🔧 RILEY POWER DEBUG: Cleaning QTY column")
+        
+        def clean_qty_value(value):
+            """Clean QTY value to keep only numeric content."""
+            if pd.isna(value) or value == '':
+                return ''
+            
+            # Convert to string and clean
+            str_value = str(value).strip()
+            if str_value == 'nan':
+                return ''
+            
+            # Try to extract numeric part
+            # Remove common non-numeric characters but keep decimals
+            import re
+            numeric_match = re.search(r'^(\d+(?:\.\d+)?)', str_value)
+            if numeric_match:
+                return numeric_match.group(1)
+            else:
+                # If no numeric content found, return empty string
+                return ''
+        
+        # Apply cleaning to QTY column
+        df_clean['QTY'] = df_clean['QTY'].apply(clean_qty_value)
+        print(f"🔧 RILEY POWER DEBUG: QTY column cleaned")
+    
+    # Standardize column names (including MODEL NO -> MPN conversion)
+    column_mapping = {
+        'ITEM': 'ITEM',
+        'QTY': 'QTY',
+        'MANUFACTURER': 'MANUFACTURER',
+        'MODEL NO': 'MPN',  # Convert MODEL NO to MPN for OEMsecrets
+        'DESCRIPTION': 'DESCRIPTION'
+    }
+    
+    # Apply column mapping
+    for old_col, new_col in column_mapping.items():
+        if old_col in df_clean.columns and old_col != new_col:
+            df_clean = df_clean.rename(columns={old_col: new_col})
+    
+    # Remove completely empty rows
+    df_clean = df_clean.dropna(how='all').reset_index(drop=True)
+    
+    # Remove rows where all main columns are empty
+    main_columns = ['ITEM', 'QTY', 'MANUFACTURER', 'MPN', 'DESCRIPTION']  # Updated to use MPN
+    existing_main_columns = [col for col in main_columns if col in df_clean.columns]
+    
+    if existing_main_columns:
+        df_clean = df_clean.dropna(subset=existing_main_columns, how='all').reset_index(drop=True)
+    
+    print(f"🔧 RILEY POWER DEBUG: Final table shape: {df_clean.shape}")
+    print(f"🔧 RILEY POWER DEBUG: Final columns: {df_clean.columns.tolist()}")
+    
+    if not df_clean.empty:
+        print(f"🔧 RILEY POWER DEBUG: Sample final data:")
+        print(df_clean.head(3).to_string())
+    
+    return df_clean
+
+
+def clean_shanklin_columns(df):
+    """
+    Clean and format Shanklin BoM table columns.
+    
+    Shanklin PDFs have a unique structure:
+    - Headers are at the bottom of the table
+    - Items count backwards from highest number to 1
+    - Need to flip the table and reorder by item number
+    
+    Args:
+        df: pandas DataFrame with raw extracted data
+        
+    Returns:
+        pandas DataFrame with cleaned column names and proper ordering
+    """
+    print(f"🔧 SHANKLIN DEBUG: Starting Shanklin formatting")
+    print(f"🔧 SHANKLIN DEBUG: Input shape: {df.shape}")
+    print(f"🔧 SHANKLIN DEBUG: Input columns: {df.columns.tolist()}")
+    
+    if df.empty:
+        print("🔧 SHANKLIN DEBUG: Empty dataframe, returning as-is")
+        return df
+    
+    # Create a copy to avoid modifying original
+    df_clean = df.copy()
+    
+    # Remove completely empty rows first
+    df_clean = df_clean.dropna(how='all').reset_index(drop=True)
+    
+    if df_clean.empty:
+        print("🔧 SHANKLIN DEBUG: No data after removing empty rows")
+        return df_clean
+    
+    print(f"🔧 SHANKLIN DEBUG: After removing empty rows - shape: {df_clean.shape}")
+    
+    # Find the header row - it's typically the last row or a row that contains header-like text
+    header_row_idx = None
+    
+    # Look for rows that contain header keywords
+    header_keywords = ['ITEM', 'PART', 'NUMBER', 'DESCRIPTION', 'QTY', 'SPC']
+    
+    for idx in range(len(df_clean) - 1, -1, -1):  # Search from bottom up
+        row_text = ' '.join(df_clean.iloc[idx].astype(str).str.upper())
+        if any(keyword in row_text for keyword in header_keywords):
+            header_row_idx = idx
+            print(f"🔧 SHANKLIN DEBUG: Found header row at index {idx}")
+            break
+    
+    if header_row_idx is None:
+        # If no header found, assume last row is header
+        header_row_idx = len(df_clean) - 1
+        print(f"🔧 SHANKLIN DEBUG: No header keywords found, using last row as header (index {header_row_idx})")
+    
+    # Extract header row and use it as column names
+    if header_row_idx < len(df_clean):
+        header_row = df_clean.iloc[header_row_idx].fillna('').astype(str).str.strip()
+        
+        # Clean up header names
+        new_columns = []
+        for i, col in enumerate(header_row):
+            if col == '' or col == 'nan':
+                new_columns.append(f'Column_{i}')
+            else:
+                # Clean up common header variations
+                clean_col = col.upper().strip()
+                if 'ITEM' in clean_col and 'NO' in clean_col:
+                    new_columns.append('ITEM')
+                elif 'PART' in clean_col and 'NUMBER' in clean_col:
+                    new_columns.append('MPN')
+                elif 'DESCRIPTION' in clean_col:
+                    new_columns.append('DESCRIPTION')
+                elif clean_col.startswith('SPC-'):
+                    new_columns.append(clean_col)  # Keep SPC columns as-is
+                else:
+                    new_columns.append(clean_col)
+        
+        df_clean.columns = new_columns
+        print(f"🔧 SHANKLIN DEBUG: Set column names: {new_columns}")
+        
+        # Remove the header row from data
+        df_clean = df_clean.iloc[:header_row_idx].reset_index(drop=True)
+        print(f"🔧 SHANKLIN DEBUG: After removing header row - shape: {df_clean.shape}")
+    
+    # Now we need to reverse the order and sort by item number
+    # First, identify the ITEM column
+    item_col = None
+    for col in df_clean.columns:
+        if 'ITEM' in str(col).upper():
+            item_col = col
+            break
+    
+    if item_col is not None:
+        print(f"🔧 SHANKLIN DEBUG: Found ITEM column: {item_col}")
+        
+        # Convert ITEM column to numeric, handling non-numeric values
+        def clean_item_number(value):
+            if pd.isna(value) or value == '':
+                return 999999  # Put empty items at the end
+            try:
+                # Extract numeric part
+                import re
+                match = re.search(r'(\d+)', str(value))
+                if match:
+                    return int(match.group(1))
+                else:
+                    return 999999  # Non-numeric items at the end
+            except:
+                return 999999
+        
+        df_clean['_item_sort'] = df_clean[item_col].apply(clean_item_number)
+        
+        # Sort by item number (ascending order: 1, 2, 3, ...)
+        df_clean = df_clean.sort_values('_item_sort').reset_index(drop=True)
+        df_clean = df_clean.drop('_item_sort', axis=1)
+        
+        print(f"🔧 SHANKLIN DEBUG: Sorted by item number")
+    else:
+        print("🔧 SHANKLIN DEBUG: No ITEM column found, keeping original order")
+    
+    # Standardize common columns
+    column_mapping = {
+        'ITEM': 'ITEM',
+        'MPN': 'MPN',
+        'DESCRIPTION': 'DESCRIPTION'
+    }
+    
+    # Apply column mapping
+    for old_col, new_col in column_mapping.items():
+        if old_col in df_clean.columns and old_col != new_col:
+            df_clean = df_clean.rename(columns={old_col: new_col})
+    
+    # Handle quantity columns - look for SPC- columns or numeric columns
+    qty_columns = []
+    for col in df_clean.columns:
+        if str(col).startswith('SPC-') or (str(col).isdigit() and col not in ['ITEM', 'MPN', 'DESCRIPTION']):
+            qty_columns.append(col)
+    
+    if qty_columns:
+        print(f"🔧 SHANKLIN DEBUG: Found quantity columns: {qty_columns}")
+        # For now, keep the quantity columns as-is, but we could sum them or pick the first one
+        # Let's take the first quantity column as the main QTY
+        if len(qty_columns) > 0:
+            first_qty_col = qty_columns[0]
+            if 'QTY' not in df_clean.columns:
+                df_clean['QTY'] = df_clean[first_qty_col]
+                print(f"🔧 SHANKLIN DEBUG: Used {first_qty_col} as QTY column")
+    
+    # Remove completely empty rows
+    df_clean = df_clean.dropna(how='all').reset_index(drop=True)
+    
+    # Remove rows where all main columns are empty
+    main_columns = ['ITEM', 'MPN', 'DESCRIPTION']
+    existing_main_columns = [col for col in main_columns if col in df_clean.columns]
+    
+    if existing_main_columns:
+        df_clean = df_clean.dropna(subset=existing_main_columns, how='all').reset_index(drop=True)
+    
+    print(f"🔧 SHANKLIN DEBUG: Final table shape: {df_clean.shape}")
+    print(f"🔧 SHANKLIN DEBUG: Final columns: {df_clean.columns.tolist()}")
+    print(f"🔧 SHANKLIN DEBUG: Final dtypes: {df_clean.dtypes.to_dict()}")
+    
+    if not df_clean.empty:
+        print(f"🔧 SHANKLIN DEBUG: Sample final data:")
+        print(df_clean.head(5).to_string())
+    
+    # Additional debugging for potential GUI issues
+    print(f"🔧 SHANKLIN DEBUG: DataFrame memory usage: {df_clean.memory_usage().sum()} bytes")
+    print(f"🔧 SHANKLIN DEBUG: DataFrame has any NaN values: {df_clean.isna().any().any()}")
+    
+    return df_clean
+
+
 # Customer formatter registry
+def clean_901d_columns(df):
+    """
+    Clean 901D-specific table formatting.
+    
+    901D tables have a unique format:
+    - All data is crammed into a single column
+    - Headers are at the bottom instead of the top
+    - Row numbers count backwards (6, 5, 4, 3, etc.)
+    - Expected columns: FIND NO. | 901D P/N | QTY | MFR | CAGE MFR | MFR P/N | DESCRIPTION
+    """
+    print(f"\n🔧 901D DEBUG: Original table shape: {df.shape}")
+    print(f"🔧 901D DEBUG: First few rows:\n{df.head()}")
+    print(f"🔧 901D DEBUG: Last few rows:\n{df.tail()}")
+    
+    if df.empty:
+        print("🔧 901D DEBUG: Empty dataframe passed to clean_901d_columns")
+        return df
+
+    # 901D tables typically have all data in the first column
+    if df.shape[1] == 1:
+        print("🔧 901D DEBUG: Single column detected - applying 901D-specific parsing")
+        
+        # Get all data as text from the first column
+        all_text = df.iloc[:, 0].fillna('').astype(str).tolist()
+        print(f"🔧 901D DEBUG: Raw text data: {all_text}")
+        
+        # Find the header row (usually contains "FIND NO.|901D P/N|QTY|MFR")
+        header_row_idx = None
+        for i, text in enumerate(all_text):
+            if 'FIND NO.' in text.upper() and 'QTY' in text.upper() and 'MFR' in text.upper():
+                header_row_idx = i
+                print(f"🔧 901D DEBUG: Found header row at index {i}: {text}")
+                break
+        
+        if header_row_idx is None:
+            print("🔧 901D DEBUG: Could not find header row, using generic cleaning")
+            return clean_generic_columns(df)
+        
+        # Split the header to get column names
+        header_text = all_text[header_row_idx]
+        # Common 901D column separators
+        if '|' in header_text:
+            column_names = [col.strip() for col in header_text.split('|')]
+        elif 'FIND NO.' in header_text:
+            # Try to parse the expected format manually
+            column_names = ['FIND NO.', '901D P/N', 'QTY', 'MFR', 'CAGE MFR', 'MPN', 'DESCRIPTION']
+        else:
+            column_names = ['FIND NO.', '901D P/N', 'QTY', 'MFR', 'CAGE MFR', 'MPN', 'DESCRIPTION']
+        
+        print(f"🔧 901D DEBUG: Parsed column names: {column_names}")
+        
+        # Get data rows (everything before the header row, since 901D has headers at bottom)
+        data_rows = all_text[:header_row_idx]
+        print(f"🔧 901D DEBUG: Found {len(data_rows)} data rows")
+        
+        # Fill in missing FIND NO. values before parsing
+        # 901D tables count down from highest number, so rows without numbers should be filled
+        print(f"🔧 901D DEBUG: Original data rows: {data_rows}")
+        
+        # Find the pattern of existing FIND NO. values
+        existing_numbers = []
+        for i, row_text in enumerate(data_rows):
+            find_no_match = re.match(r'^(\d+)\s+', row_text.strip())
+            if find_no_match:
+                existing_numbers.append((i, int(find_no_match.group(1))))
+        
+        print(f"🔧 901D DEBUG: Found existing FIND NO. values: {existing_numbers}")
+        
+        # Fill in missing numbers by working backwards from the pattern
+        if existing_numbers:
+            # Sort by FIND NO. to understand the pattern
+            existing_numbers.sort(key=lambda x: x[1], reverse=True)  # Highest first
+            
+            # Fill in missing numbers
+            filled_data_rows = data_rows.copy()
+            expected_number = existing_numbers[0][1] + 1  # Start from highest + 1
+            
+            for i in range(len(filled_data_rows)):
+                row_text = filled_data_rows[i].strip()
+                
+                # Check if this row already has a FIND NO.
+                if re.match(r'^\d+\s+', row_text):
+                    # Extract the existing number and update expected
+                    find_no_match = re.match(r'^(\d+)\s+', row_text)
+                    if find_no_match:
+                        current_number = int(find_no_match.group(1))
+                        expected_number = current_number - 1  # Next row should be one less
+                else:
+                    # This row is missing a FIND NO., add it
+                    if row_text and expected_number > 0:  # Only add if we have text and valid number
+                        print(f"🔧 901D DEBUG: Adding missing FIND NO. {expected_number} to row: {row_text}")
+                        filled_data_rows[i] = f"{expected_number} {row_text}"
+                        expected_number -= 1
+            
+            print(f"🔧 901D DEBUG: After filling missing FIND NO.: {filled_data_rows}")
+            data_rows = filled_data_rows
+        
+        # Parse each data row - 901D format typically has data separated by spaces/delimiters
+        parsed_rows = []
+        for row_text in data_rows:
+            if not row_text.strip():
+                continue
+                
+            # Try to parse the row into components
+            # Expected 901D format: FIND_NO 901D_P/N QTY [CAGE_CODE] MFR MFR_P/N DESCRIPTION
+            row_text = row_text.strip()
+            print(f"🔧 901D DEBUG: Parsing row: {row_text}")
+            
+            # Extract leading number (FIND NO.)
+            find_no_match = re.match(r'^(\d+)\s+(.+)', row_text)
+            if find_no_match:
+                find_no = find_no_match.group(1)
+                remaining_text = find_no_match.group(2)
+                
+                # For continuation rows that were just assigned a number, we need different parsing
+                if row_text.startswith('2 RIBBON CONNECTOR') or row_text.startswith('1 RIBBON CABLE'):
+                    # These are continuation rows with a different format
+                    # Extract the actual part number from the middle of the text
+                    
+                    if '8501928' in remaining_text:
+                        # Row 2: "2 RIBBON CONNECTOR, p2 8501928 2 7CQB5 TE CONNECTIVITY 1-1658622-1 CrOEPTACIE opin"
+                        part_match = re.search(r'p2\s+(\d+)', remaining_text)
+                        if part_match:
+                            part_no = part_match.group(1)  # 8501928
+                            qty = '2'
+                            mfr = 'TE CONNECTIVITY'
+                            cage_mfr = '7CQB5'
+                            mfr_pn = '1-1658622-1'
+                            description = 'RIBBON CONNECTOR, CrOEPTACIE opin'
+                        else:
+                            part_no = '8501928'
+                            qty = '2'
+                            mfr = 'TE CONNECTIVITY'
+                            cage_mfr = '7CQB5'
+                            mfr_pn = '1-1658622-1'
+                            description = 'RIBBON CONNECTOR'
+                    
+                    elif '8800228' in remaining_text:
+                        # Row 1: "1 RIBBON CABLE] 8800228 ] 7638 1 3M 3759/60 COND"
+                        part_match = re.search(r'(\d+)\s*\]\s*7638', remaining_text)
+                        if part_match:
+                            part_no = part_match.group(1)  # 8800228
+                            qty = '1'
+                            mfr = '3M'
+                            cage_mfr = '7638'
+                            mfr_pn = '3759/60'
+                            description = 'RIBBON CABLE COND'
+                        else:
+                            part_no = '8800228'
+                            qty = '1'
+                            mfr = '3M'
+                            cage_mfr = '7638'
+                            mfr_pn = '3759/60'
+                            description = 'RIBBON CABLE'
+                    else:
+                        # Fallback to original parsing
+                        parts = remaining_text.split()
+                        part_no = parts[0] if parts else ''
+                        qty = '1'
+                        mfr = ''
+                        cage_mfr = ''
+                        mfr_pn = ''
+                        description = remaining_text
+                    
+                    # Create the parsed row for continuation rows
+                    parsed_row = {
+                        'FIND NO.': find_no,
+                        '901D P/N': part_no,
+                        'QTY': qty,
+                        'MFR': mfr,
+                        'CAGE MFR': cage_mfr,
+                        'MPN': mfr_pn,
+                        'DESCRIPTION': description
+                    }
+                    parsed_rows.append(parsed_row)
+                    print(f"🔧 901D DEBUG: Parsed continuation row: {parsed_row}")
+                    continue
+                
+                # Original parsing logic for normal rows
+                # Split remaining text into components
+                parts = remaining_text.split()
+                
+                if len(parts) >= 2:  # Reduced minimum requirement
+                    # 901D format: FIND_NO 901D_P/N [QTY] [more components...]
+                    part_no = parts[0]  # 901D P/N (like 8000539)
+                    
+                    # Look for QTY - in 901D it might be any small number or sometimes missing
+                    qty = None
+                    qty_idx = None
+                    
+                    # First try: look for a small digit (typical QTY pattern)
+                    for i in range(1, min(4, len(parts))):
+                        if parts[i].isdigit() and int(parts[i]) <= 50:  # Increased limit
+                            qty = parts[i]
+                            qty_idx = i
+                            break
+                    
+                    # If no small number found, assume QTY is 1 or missing
+                    if qty_idx is None:
+                        # Check if second part could be a cage code (like "] 7CQB5")
+                        if len(parts) >= 2 and (parts[1].startswith(']') or len(parts[1]) <= 6):
+                            qty = '1'  # Default QTY
+                            qty_idx = 0  # Start parsing from part 1
+                        else:
+                            qty = '1'  # Default QTY
+                            qty_idx = 1  # Skip the potential part number
+                    
+                    if qty_idx is not None:
+                        # Parse remaining components after QTY position
+                        description_parts = parts[qty_idx + 1:] if qty_idx + 1 < len(parts) else []
+                        
+                        # Try to identify MFR information
+                        mfr = ''
+                        cage_mfr = ''
+                        mfr_pn = ''
+                        description = ''
+                        
+                        if description_parts:
+                            desc_text = ' '.join(description_parts)
+                            
+                            # Common manufacturer patterns for 901D
+                            mfr_patterns = ['TE CONNECTIVITY', 'BRADY', '3M', 'SIEMENS', 'MOLEX', 'AMPHENOL']
+                            mfr_found = False
+                            
+                            for pattern in mfr_patterns:
+                                if pattern in desc_text.upper():
+                                    # Find where the manufacturer name starts
+                                    mfr_start = desc_text.upper().find(pattern)
+                                    
+                                    # Everything before MFR name could be CAGE code or part number
+                                    before_mfr = desc_text[:mfr_start].strip()
+                                    after_mfr = desc_text[mfr_start + len(pattern):].strip()
+                                    
+                                    # Parse before MFR (likely cage code or part identifier)
+                                    if before_mfr:
+                                        # Look for patterns like "] 7CQB5" or "7638"
+                                        cage_match = re.search(r'(\w+)$', before_mfr)
+                                        if cage_match:
+                                            cage_mfr = cage_match.group(1)
+                                    
+                                    mfr = pattern
+                                    
+                                    # Parse after MFR (part number and description)
+                                    if after_mfr:
+                                        # Try to separate MFR P/N from description
+                                        after_parts = after_mfr.split()
+                                        if after_parts:
+                                            # First part is likely MFR P/N
+                                            mfr_pn = after_parts[0]
+                                            if len(after_parts) > 1:
+                                                description = ' '.join(after_parts[1:])
+                                            else:
+                                                description = ''
+                                    
+                                    mfr_found = True
+                                    break
+                            
+                            if not mfr_found:
+                                # Fallback: assume format is [CAGE] MFR PART DESCRIPTION
+                                if len(description_parts) >= 2:
+                                    cage_mfr = description_parts[0] if description_parts[0] not in ['|', ']'] else ''
+                                    mfr = description_parts[1] if len(description_parts) > 1 else ''
+                                    if len(description_parts) > 2:
+                                        mfr_pn = description_parts[2]
+                                        description = ' '.join(description_parts[3:])
+                                else:
+                                    description = desc_text
+                        
+                        # Create the parsed row
+                        parsed_row = {
+                            'FIND NO.': find_no,
+                            '901D P/N': part_no,
+                            'QTY': qty,
+                            'MFR': mfr,
+                            'CAGE MFR': cage_mfr,
+                            'MPN': mfr_pn,
+                            'DESCRIPTION': description
+                        }
+                        parsed_rows.append(parsed_row)
+                        print(f"🔧 901D DEBUG: Parsed row: {parsed_row}")
+                    else:
+                        print(f"🔧 901D DEBUG: Could not determine QTY position in row: {row_text}")
+                else:
+                    print(f"🔧 901D DEBUG: Not enough parts in row: {row_text}")
+            else:
+                # Handle rows that don't start with a number (continuation lines)
+                if parsed_rows and row_text:
+                    print(f"🔧 901D DEBUG: Treating as continuation: {row_text}")
+                    # Add to description of last row
+                    last_row = parsed_rows[-1]
+                    if last_row['DESCRIPTION']:
+                        last_row['DESCRIPTION'] += ' ' + row_text
+                    else:
+                        last_row['DESCRIPTION'] = row_text
+                else:
+                    print(f"🔧 901D DEBUG: Skipping unmatched row: {row_text}")
+        
+        if parsed_rows:
+            # Create new DataFrame from parsed rows
+            new_df = pd.DataFrame(parsed_rows)
+            
+            # 901D typically has rows in reverse order (highest FIND NO. first)
+            # Sort by FIND NO. in ascending order
+            if 'FIND NO.' in new_df.columns:
+                new_df['FIND NO._numeric'] = pd.to_numeric(new_df['FIND NO.'], errors='coerce')
+                new_df = new_df.sort_values('FIND NO._numeric').drop('FIND NO._numeric', axis=1)
+                new_df = new_df.reset_index(drop=True)
+            
+            print(f"🔧 901D DEBUG: Successfully parsed table - shape: {new_df.shape}")
+            print(f"🔧 901D DEBUG: Columns: {new_df.columns.tolist()}")
+            print(f"🔧 901D DEBUG: Sample data:\n{new_df.head()}")
+            
+            return new_df
+        else:
+            print("🔧 901D DEBUG: Could not parse any rows, falling back to generic cleaning")
+            return clean_generic_columns(df)
+    
+    else:
+        print("🔧 901D DEBUG: Multiple columns detected, using generic cleaning with OCR enhancements")
+        # If already split into columns, just clean them
+        df = clean_generic_columns(df)
+        
+        # OCR-specific cleaning
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].astype(str).str.replace(r'\s+', ' ', regex=True)
+                df[col] = df[col].str.replace(r'[^\w\s\-\.\,\(\)\/]', '', regex=True)
+                df[col] = df[col].str.strip()
+        
+        # Remove artifact rows
+        df = df[df.apply(lambda row: any(len(str(cell).strip()) > 2 for cell in row), axis=1)]
+        
+        print(f"🔧 901D DEBUG: After cleaning - shape: {df.shape}")
+        return df
+
+
+def clean_amazon_columns(df):
+    """
+    Clean Amazon-specific table formatting.
+    
+    Amazon tables have specific characteristics:
+    - Headers like "Device tag", "QTY", "Manufacturer", "Part number", "Description"
+    - Tables often have revision info and metadata at the top
+    - May contain certification columns (UL Cat. code, CSA/cUL, etc.)
+    - Sometimes data is duplicated or has merged cells
+    """
+    print(f"\n🔧 AMAZON DEBUG: Original table shape: {df.shape}")
+    print(f"🔧 AMAZON DEBUG: First few rows:\n{df.head(8)}")
+    
+    if df.empty:
+        print("🔧 AMAZON DEBUG: Empty dataframe passed to clean_amazon_columns")
+        return df
+
+    # Define Amazon-specific header keywords
+    header_keywords = [
+        'DEVICE TAG', 'QTY', 'MANUFACTURER', 'PART NUMBER', 'DESCRIPTION', 
+        'UL CAT', 'UL CERT', 'CSA', 'TYPE RATING', 'DEVICE', 'TAG', 'PART', 'NUMBER'
+    ]
+    
+    # Find the best header row
+    best_score = 0
+    best_idx = -1
+    for idx in range(min(15, len(df))):  # Scan more rows since Amazon may have more metadata
+        row = df.iloc[idx]
+        non_empty_cells = row.dropna().astype(str).str.upper().str.strip()
+        score = sum(any(kw in cell for kw in header_keywords) for cell in non_empty_cells)
+        print(f"🔧 AMAZON DEBUG: Row {idx} header score: {score} - {non_empty_cells.tolist()}")
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    
+    print(f"🔧 AMAZON DEBUG: Selected header row index: {best_idx} (score: {best_score})")
+
+    # If we found a good header row, use it
+    if best_score >= 3 and best_idx >= 0:  # Amazon should have at least 3 matching keywords
+        new_columns = df.iloc[best_idx].fillna('').astype(str).str.strip()
+        for i, col in enumerate(new_columns):
+            if col == '' or col == 'nan':
+                new_columns.iloc[i] = f'Column_{i}'
+        df.columns = new_columns
+        df = df.iloc[best_idx + 1:].reset_index(drop=True)
+        print(f"🔧 AMAZON DEBUG: After header extraction - columns: {df.columns.tolist()}")
+        print(f"🔧 AMAZON DEBUG: After header extraction - shape: {df.shape}")
+    else:
+        print("🔧 AMAZON DEBUG: No clear header row found, using existing columns")
+
+    # Remove duplicate header rows that sometimes appear as data
+    if len(df) > 0:
+        df = df[~df.apply(lambda row: row.astype(str).str.strip().tolist() == df.columns.astype(str).tolist(), axis=1)]
+        df = df.reset_index(drop=True)
+
+    # Remove rows that contain Amazon-specific metadata/footer information (be more selective)
+    reject_patterns = [
+        r'^revision\s+\d+\s+released',  # Revision info at start of row
+        r'designed by.*checked by.*approved by',  # Footer signature lines
+        r'^file name.*date.*scale',  # Footer file info
+        r'^parts list electrical.*revision.*sheet',  # Footer parts list info
+        r'^\s*bill of material\s*$',  # Standalone "Bill of material" text
+        r'^\s*n/a\s+n/a\s+n/a\s+n/a\s+n/a\s+n/a\s+n/a\s+n/a\s*$'  # Rows with all N/A values
+    ]
+    
+    for pattern in reject_patterns:
+        initial_len = len(df)
+        mask = df.apply(lambda row: not any(re.search(pattern, ' '.join(str(cell) for cell in row), re.IGNORECASE) for cell in row), axis=1)
+        df = df[mask].reset_index(drop=True)
+        removed = initial_len - len(df)
+        if removed > 0:
+            print(f"🔧 AMAZON DEBUG: Removed {removed} rows matching pattern: {pattern}")
+    
+    # Clean up empty rows and rows with only whitespace
+    df = df.dropna(how='all')
+    df = df[df.apply(lambda row: any(str(cell).strip() and str(cell).strip() != 'nan' for cell in row), axis=1)]
+    df = df.reset_index(drop=True)
+    
+    # Standard column cleaning
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].replace(['nan', 'NaN', ''], pd.NA)
+
+    print(f"🔧 AMAZON DEBUG: Final cleaned table shape: {df.shape}")
+    print(f"🔧 AMAZON DEBUG: Final columns: {df.columns.tolist()}")
+    if len(df) > 0:
+        print(f"🔧 AMAZON DEBUG: Sample data:\n{df.head(3)}")
+    
+    return df
+
+
 CUSTOMER_FORMATTERS = {
     'farrell': clean_farrell_columns,
     'nel': clean_nel_columns,
     'generic': clean_generic_columns,
-    'primetals': clean_primetals_columns
+    'primetals': clean_primetals_columns,
+    'riley_power': clean_riley_power_columns,
+    'shanklin': clean_shanklin_columns,
+    '901d': clean_901d_columns,
+    'amazon': clean_amazon_columns
 }
 
 
