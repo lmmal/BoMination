@@ -763,6 +763,27 @@ Invalid formats:
                 # Start progress indication
                 self.start_progress("Initializing pipeline...")
                 
+                # Create detailed error log for debugging
+                error_log_path = Path(pdf).parent / "bomination_error_log.txt"
+                
+                def log_to_file(message):
+                    """Log message to both console and file for debugging."""
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    log_entry = f"[{timestamp}] {message}"
+                    try:
+                        with open(error_log_path, "a", encoding="utf-8") as f:
+                            f.write(log_entry + "\n")
+                    except:
+                        pass  # Don't let logging errors crash the app
+                    print(log_entry)
+                
+                log_to_file("=== BoMination Pipeline Started ===")
+                log_to_file(f"PDF: {pdf}")
+                log_to_file(f"Pages: {pages}")
+                log_to_file(f"Company: {company}")
+                log_to_file(f"Output Directory: {output_dir}")
+                log_to_file(f"Use ROI: {self.use_roi.get()}")
+                
                 self.add_log_message("Launching main pipeline process...", "step")
                 
                 # Update progress for different stages
@@ -770,8 +791,61 @@ Invalid formats:
                 
                 # Enhanced logging for OCR debugging
                 self.add_log_message("Starting PDF table extraction...", "step")
+                log_to_file("Starting PDF table extraction...")
+                
+                # Perform comprehensive system checks with detailed logging
+                log_to_file("=== System Requirements Check ===")
+                
+                # Check Java
+                java_installed, java_version, java_error = check_java_installation()
+                if not java_installed:
+                    error_msg = f"Java not found: {java_error}"
+                    log_to_file(f"CRITICAL: {error_msg}")
+                    self.add_log_message(error_msg, "error")
+                    raise Exception(f"System Requirements Error: Java is required for PDF extraction. {java_error}")
+                else:
+                    log_to_file(f"Java OK: {java_version}")
+                    self.add_log_message(f"Java detected: {java_version}", "success")
+                
+                # Check ChromeDriver (for price lookup)
+                chrome_available, chrome_version, chrome_error = check_chromedriver_availability()
+                if not chrome_available:
+                    log_to_file(f"WARNING: ChromeDriver not available: {chrome_error}")
+                    self.add_log_message("ChromeDriver not available - price lookup may fail", "warning")
+                else:
+                    log_to_file(f"ChromeDriver OK: {chrome_version}")
+                    self.add_log_message(f"ChromeDriver detected: {chrome_version}", "success")
                 
                 # Check OCR availability and log status
+                # Enhanced logging for OCR debugging
+                self.add_log_message("Starting PDF table extraction...", "step")
+                log_to_file("Starting PDF table extraction...")
+                
+                # Perform comprehensive system checks with detailed logging
+                log_to_file("=== System Requirements Check ===")
+                
+                # Check Java
+                java_installed, java_version, java_error = check_java_installation()
+                if not java_installed:
+                    error_msg = f"Java not found: {java_error}"
+                    log_to_file(f"CRITICAL: {error_msg}")
+                    self.add_log_message(error_msg, "error")
+                    raise Exception(f"System Requirements Error: Java is required for PDF extraction. {java_error}")
+                else:
+                    log_to_file(f"Java OK: {java_version}")
+                    self.add_log_message(f"Java detected: {java_version}", "success")
+                
+                # Check ChromeDriver (for price lookup)
+                chrome_available, chrome_version, chrome_error = check_chromedriver_availability()
+                if not chrome_available:
+                    log_to_file(f"WARNING: ChromeDriver not available: {chrome_error}")
+                    self.add_log_message("ChromeDriver not available - price lookup may fail", "warning")
+                else:
+                    log_to_file(f"ChromeDriver OK: {chrome_version}")
+                    self.add_log_message(f"ChromeDriver detected: {chrome_version}", "success")
+                
+                # Check OCR availability and log status
+                log_to_file("=== OCR Components Check ===")
                 try:
                     from pipeline.ocr_preprocessor import check_ocrmypdf_installation, check_tesseract_installation
                     
@@ -779,31 +853,57 @@ Invalid formats:
                     tesseract_available, tesseract_version, tesseract_error = check_tesseract_installation()
                     
                     if ocr_available and tesseract_available:
+                        log_to_file(f"OCR OK: {ocr_version}, Tesseract: {tesseract_version}")
                         self.add_log_message(f"OCR available: {ocr_version}, Tesseract: {tesseract_version}", "success")
                     else:
+                        log_to_file(f"OCR PARTIAL: OCR={ocr_available}, Tesseract={tesseract_available}")
                         self.add_log_message("OCR not fully available - some PDFs may fail", "warning")
                         if not ocr_available:
+                            log_to_file(f"OCRmyPDF issue: {ocr_error}")
                             self.add_log_message(f"OCRmyPDF issue: {ocr_error}", "warning")
                         if not tesseract_available:
+                            log_to_file(f"Tesseract issue: {tesseract_error}")
                             self.add_log_message(f"Tesseract issue: {tesseract_error}", "warning")
                             
                 except Exception as ocr_check_error:
+                    log_to_file(f"OCR check failed: {ocr_check_error}")
                     self.add_log_message(f"Could not check OCR status: {ocr_check_error}", "warning")
+                
+                log_to_file("=== Starting Pipeline Execution ===")
                 
                 # Check Camelot availability for ROI fallback
                 try:
                     import camelot
+                    log_to_file("Camelot available for ROI fallback")
                     self.add_log_message("Camelot available for ROI fallback", "success")
                 except ImportError:
+                    log_to_file("Camelot not available - install with: pip install camelot-py[cv]")
                     self.add_log_message("Camelot not available - install with: pip install camelot-py[cv]", "warning")
                 except Exception as camelot_error:
+                    log_to_file(f"Camelot error: {camelot_error}")
                     self.add_log_message(f"Camelot error: {camelot_error}", "warning")
                 
-                # Call the pipeline with GUI review callback
-                from pipeline.main_pipeline import run_main_pipeline_with_gui_review
+                # Call the pipeline with GUI review callback and comprehensive error handling
+                log_to_file("Calling pipeline with GUI review...")
+                self.add_log_message("Calling main pipeline with review capability...", "step")
+                
+                # Call the pipeline with GUI review callback and comprehensive error handling
+                log_to_file("Calling pipeline with GUI review...")
+                self.add_log_message("Calling main pipeline with review capability...", "step")
+                
+                # Import the pipeline function
+                try:
+                    from pipeline.main_pipeline import run_main_pipeline_with_gui_review
+                    log_to_file("Pipeline module imported successfully")
+                except Exception as import_error:
+                    error_msg = f"Failed to import pipeline module: {import_error}"
+                    log_to_file(f"CRITICAL: {error_msg}")
+                    self.add_log_message(error_msg, "error")
+                    raise Exception(f"Import Error: {error_msg}")
                 
                 # Create a callback that will be called when review is needed
                 def review_callback(merged_df):
+                    log_to_file("Review callback triggered from pipeline")
                     print("📝 GUI REVIEW: Review callback called from pipeline")
                     print(f"📝 GUI REVIEW: Merged DataFrame shape: {merged_df.shape}")
                     print(f"📝 GUI REVIEW: Merged DataFrame columns: {merged_df.columns.tolist()}")
@@ -889,8 +989,10 @@ Invalid formats:
                 
                 # Log the result if it contains useful information
                 if result:
+                    log_to_file(f"Pipeline result: {result}")
                     self.add_log_message(f"Pipeline result: {result}", "info")
                 
+                log_to_file("Pipeline process completed successfully!")
                 self.add_log_message("Pipeline process completed successfully!", "success")
                 
                 # Update progress to show completion
@@ -922,9 +1024,9 @@ Invalid formats:
                 
                 if found_files:
                     files_text = "\n".join([f"• {Path(f).name}" for f in found_files])
-                    success_message = f"Pipeline completed successfully!\n\nOutput files created:\n{files_text}\n\nLocation: {pdf_dir}"
+                    success_message = f"Pipeline completed successfully!\n\nOutput files created:\n{files_text}\n\nLocation: {pdf_dir}\n\nDetailed log saved to: {error_log_path}"
                 else:
-                    success_message = "Pipeline completed successfully!\n\nCheck the output folder for your processed files."
+                    success_message = f"Pipeline completed successfully!\n\nCheck the output folder for your processed files.\n\nDetailed log saved to: {error_log_path}"
                 
                 # Schedule the success dialog on the main thread
                 def show_success():
@@ -947,6 +1049,22 @@ Invalid formats:
             except Exception as e:
                 # Stop progress on error
                 self.stop_progress("Pipeline failed")
+                
+                # Log comprehensive error information
+                error_message = str(e)
+                try:
+                    log_to_file(f"=== PIPELINE FAILED ===")
+                    log_to_file(f"Error: {error_message}")
+                    log_to_file(f"Error type: {type(e).__name__}")
+                    
+                    # Add stack trace to log file
+                    import traceback
+                    log_to_file("=== STACK TRACE ===")
+                    log_to_file(traceback.format_exc())
+                    log_to_file("=== END ERROR LOG ===")
+                except:
+                    pass  # Don't let logging errors prevent error handling
+                
                 self.add_log_message(f"Pipeline failed: {str(e)}", "error")
                 
                 print("=== Pipeline failed ===")
@@ -976,19 +1094,43 @@ Invalid formats:
                                 "1. Ensure Chrome browser is installed and up to date\n" +
                                 "2. Download the matching ChromeDriver from: https://chromedriver.chromium.org/\n" +
                                 "3. Place chromedriver.exe in the application's src folder\n" +
-                                "4. Check that antivirus software isn't blocking the application",
+                                "4. Check that antivirus software isn't blocking the application\n\n" +
+                                f"Detailed error log saved to: {error_log_path}",
+                                f"Full error details:\n{error_message}"
+                            ).show()
+                        elif "java" in error_str or "system requirements" in error_str:
+                            # System requirements error
+                            CopyableErrorDialog(
+                                self.root,
+                                "System Requirements Error",
+                                "The pipeline failed due to missing system requirements.\n\n" +
+                                "This usually means:\n" +
+                                "• Java is not installed (required for PDF table extraction)\n" +
+                                "• ChromeDriver is not available (required for price lookup)\n" +
+                                "• Required Python packages are missing\n\n" +
+                                "To resolve this:\n" +
+                                "1. Install Java from: https://www.java.com/download/\n" +
+                                "2. Download ChromeDriver from: https://chromedriver.chromium.org/\n" +
+                                "3. Place chromedriver.exe in the application's src folder\n" +
+                                "4. Restart the application and try again\n\n" +
+                                f"Detailed error log saved to: {error_log_path}",
                                 f"Full error details:\n{error_message}"
                             ).show()
                         else:
                             # Generic error dialog
-                            Messagebox.show_error(
-                                "Pipeline Error", 
-                                f"Pipeline failed with error:\n\n{error_message}",
-                                parent=self.root
-                            )
+                            CopyableErrorDialog(
+                                self.root,
+                                "Pipeline Error",
+                                f"The BoM processing pipeline encountered an error and could not complete.\n\n" +
+                                f"Error: {error_message}\n\n" +
+                                f"A detailed error log has been saved to:\n{error_log_path}\n\n" +
+                                "Please share this log file with support for assistance.",
+                                f"Full error details:\n{error_message}"
+                            ).show()
                     except Exception as gui_error:
                         print(f"[GUI UPDATE] Could not show error dialog: {gui_error}")
                         print(f"ERROR: {error_message}")
+                        print(f"ERROR LOG: Check {error_log_path} for details")
                 
                 try:
                     self.root.after(0, show_error)

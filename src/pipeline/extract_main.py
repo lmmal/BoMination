@@ -1060,35 +1060,13 @@ def merge_tables_and_export(tables, output_path, sheet_name="Combined_BoM", comp
         import pandas as pd
         
         print(f"🔗 Merging {len(tables)} tables...")
-        if company:
-            print(f"🎨 Will apply {company} customer formatting...")
         
-        # Apply customer formatting to each table before merging
-        formatted_tables = []
-        for i, table in enumerate(tables):
-            print(f"📊 Processing table {i+1} for merging...")
-            
-            # Apply customer formatting if specified
-            if company:
-                print(f"🎨 Applying {company} formatting to table {i+1}...")
-                try:
-                    from omni_cust.customer_formatters import apply_customer_formatter
-                    formatted_table = apply_customer_formatter(table, company)
-                    if formatted_table is not None and not formatted_table.empty:
-                        formatted_tables.append(formatted_table)
-                        print(f"    ✅ Table {i+1} formatted successfully")
-                    else:
-                        print(f"    ⚠️ Table {i+1} formatting returned empty, using original")
-                        formatted_tables.append(table)
-                except Exception as e:
-                    print(f"    ❌ Error formatting table {i+1}: {e}")
-                    print(f"    ⚠️ Using original table without formatting")
-                    formatted_tables.append(table)
-            else:
-                formatted_tables.append(table)
+        # Tables have already been formatted by process_and_format_tables()
+        # No need to apply customer formatting again here
+        print(f"📊 Merging pre-formatted tables...")
         
         # Simple concatenation for now - could be enhanced with more sophisticated merging
-        merged_table = pd.concat(formatted_tables, ignore_index=True)
+        merged_table = pd.concat(tables, ignore_index=True)
         
         # Clean merged table
         merged_table = merged_table.fillna('')
@@ -1257,9 +1235,12 @@ def run_main_extraction_workflow():
         
         print(f"✅ Extracted {len(extracted_tables)} tables")
         
-        # Show table selection interface
-        if len(extracted_tables) > 1:
-            print("📋 Multiple tables found - showing selection interface...")
+        # Show table selection interface (always show, even for single table)
+        if len(extracted_tables) >= 1:
+            if len(extracted_tables) > 1:
+                print("📋 Multiple tables found - showing selection interface...")
+            else:
+                print("📋 Single table found - showing selection interface...")
             from gui.table_selector import show_table_selector
             selected_tables = show_table_selector(extracted_tables)
             
@@ -1268,7 +1249,7 @@ def run_main_extraction_workflow():
                 import sys
                 sys.exit(1)
         else:
-            print("📋 Single table found - using automatically...")
+            print("📋 No tables found - cannot proceed")
             selected_tables = extracted_tables
         
         # Process and format tables
@@ -1279,7 +1260,7 @@ def run_main_extraction_workflow():
             import sys
             sys.exit(1)
         
-        # Generate output path
+        # Generate output paths
         from pathlib import Path
         pdf_dir = Path(pdf_path).parent
         pdf_name = Path(pdf_path).stem
@@ -1287,18 +1268,39 @@ def run_main_extraction_workflow():
         if output_directory:
             output_dir = Path(output_directory)
             output_dir.mkdir(parents=True, exist_ok=True)
+            extracted_path = output_dir / f"{pdf_name}_extracted.xlsx"
             merged_path = output_dir / f"{pdf_name}_merged.xlsx"
         else:
+            extracted_path = pdf_dir / f"{pdf_name}_extracted.xlsx"
             merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
         
-        # Save merged tables
-        success = merge_tables_and_export(processed_tables, str(merged_path), "Combined_BoM", company)
+        # Save individual extracted tables first (preserves original table structure)
+        print(f"💾 Saving individual extracted tables...")
+        extracted_success = save_tables_to_excel(processed_tables, str(extracted_path))
         
-        if success:
-            print(f"✅ Extraction completed successfully!")
-            print(f"📁 Output file: {merged_path}")
+        if extracted_success:
+            print(f"✅ Individual tables saved: {extracted_path}")
         else:
-            print("❌ Failed to save merged tables")
+            print(f"❌ Failed to save individual tables to: {extracted_path}")
+        
+        # Save merged tables (combines all tables into one)
+        print(f"💾 Saving merged table...")
+        merged_success = merge_tables_and_export(processed_tables, str(merged_path), "Combined_BoM", company)
+        
+        if merged_success:
+            print(f"✅ Merged table saved: {merged_path}")
+        else:
+            print(f"❌ Failed to save merged table to: {merged_path}")
+        
+        # Consider it successful if at least one save operation worked
+        if extracted_success or merged_success:
+            print(f"✅ Extraction completed successfully!")
+            if extracted_success:
+                print(f"📁 Extracted tables file: {extracted_path}")
+            if merged_success:
+                print(f"📁 Merged table file: {merged_path}")
+        else:
+            print("❌ Failed to save any tables")
             import sys
             sys.exit(1)
             

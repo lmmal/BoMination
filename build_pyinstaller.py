@@ -8,6 +8,27 @@ import sys
 import subprocess
 import os
 
+def terminate_existing_app():
+    """Terminate any running instances of BoMinationApp.exe."""
+    print("🔍 Checking for running BoMinationApp instances...")
+    
+    try:
+        # Check if BoMinationApp.exe is running
+        result = subprocess.run(['tasklist', '/fi', 'imagename eq BoMinationApp.exe'], 
+                              capture_output=True, text=True, shell=True)
+        
+        if 'BoMinationApp.exe' in result.stdout:
+            print("⚠️  Found running BoMinationApp instances - terminating...")
+            subprocess.run(['taskkill', '/f', '/im', 'BoMinationApp.exe'], 
+                          capture_output=True, shell=True)
+            print("✅ Terminated existing instances")
+        else:
+            print("✅ No running instances found")
+            
+    except Exception as e:
+        print(f"⚠️  Could not check/terminate existing instances: {e}")
+        print("   Please manually close any running BoMinationApp instances")
+
 def check_dependencies():
     """Check if all required dependencies are installed."""
     print("🔍 Checking dependencies...")
@@ -47,8 +68,22 @@ def build_app():
     if not check_dependencies():
         sys.exit(1)
     
-    # Get the current directory
+    # Terminate any existing instances before building
+    terminate_existing_app()
+    
+    # Clean up existing build artifacts
     current_dir = Path(__file__).parent
+    exe_path = current_dir / "dist" / "BoMinationApp.exe"
+    if exe_path.exists():
+        try:
+            exe_path.unlink()
+            print("✅ Removed existing executable")
+        except PermissionError:
+            print("⚠️  Could not remove existing executable - it may still be in use")
+            print("   Please manually delete dist/BoMinationApp.exe and try again")
+            sys.exit(1)
+    
+    # Get the current directory
     src_dir = current_dir / "src"
     
     # Main script path - use the main BoMinationApp.py directly

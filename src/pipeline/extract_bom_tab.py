@@ -20,7 +20,49 @@ if str(src_dir) not in sys.path:
 
 # Tabula-specific extraction functions
 def configure_tabula_environment():
-    """Configure environment variables for tabula to handle encoding issues."""
+    """Configure e                           # Sa                # Save individual extracted tables first (preserves original table structure)
+                print(f"💾 Saving individual extracted tables to: {extracted_path}")
+                print(f"🔧 Using processed_tables for extracted file (count: {len(processed_tables)})")
+                
+                try:
+                    extracted_success = save_tables_to_excel(processed_tables, str(extracted_path))
+                    print(f"🔧 save_tables_to_excel returned: {extracted_success}")
+                except Exception as save_error:
+                    print(f"❌ save_tables_to_excel failed with exception: {save_error}")
+                    import traceback
+                    traceback.print_exc()
+                    extracted_success = False
+                
+                if extracted_success:
+                    print(f"✅ Individual tables saved: {extracted_path}")
+                    print(f"   File exists: {extracted_path.exists()}")
+                    if extracted_path.exists():
+                        print(f"   File size: {extracted_path.stat().st_size} bytes")
+                else:
+                    print(f"❌ Failed to save individual tables to: {extracted_path}")
+                    print(f"   extracted_success = {extracted_success}")idual extracted tables first (preserves original table structure)
+                print(f"💾 Saving individual extracted tables to: {extracted_path}")
+                print(f"🔧 Using processed_tables for extracted file (count: {len(processed_tables)})")
+                
+                try:
+                    extracted_success = save_tables_to_excel(processed_tables, str(extracted_path))
+                    print(f"🔧 save_tables_to_excel returned: {extracted_success}")
+                except Exception as save_error:
+                    print(f"❌ save_tables_to_excel failed with exception: {save_error}")
+                    import traceback
+                    traceback.print_exc()
+                    extracted_success = False  # Save individual extracted tables first (preserves original table structure)
+                print(f"💾 Saving individual extracted tables to: {extracted_path}")
+                extracted_success = save_tables_to_excel(processed_tables, str(extracted_path))
+                
+                if extracted_success:
+                    print(f"✅ Individual tables saved: {extracted_path}")
+                else:
+                    print(f"❌ Failed to save individual tables to: {extracted_path}")
+                
+                # Save merged tables (combines all tables into one)
+                print(f"💾 Saving merged table to: {merged_path}")
+                merged_success = merge_tables_and_export(processed_tables, str(merged_path))ariables for tabula to handle encoding issues."""
     original_java_options = os.environ.get('JAVA_TOOL_OPTIONS', '')
     original_lang = os.environ.get('LANG', '')
     original_lc_all = os.environ.get('LC_ALL', '')
@@ -568,9 +610,12 @@ if __name__ == "__main__":
             if tables:
                 print(f"✅ ROI extraction found {len(tables)} tables")
                 
-                # Show table selection interface like the normal workflow
-                if len(tables) > 1:
-                    print("📋 Multiple tables found - showing selection interface...")
+                # Show table selection interface like the normal workflow (always show, even for single table)
+                if len(tables) >= 1:
+                    if len(tables) > 1:
+                        print("📋 Multiple tables found - showing selection interface...")
+                    else:
+                        print("📋 Single table found - showing selection interface...")
                     from gui.table_selector import show_table_selector
                     selected_tables = show_table_selector(tables)
                     
@@ -579,29 +624,88 @@ if __name__ == "__main__":
                         sys.stdout.flush()
                         sys.exit(1)
                 else:
-                    print("📋 Single table found - using automatically...")
+                    print("📋 No tables found - cannot proceed")
                     selected_tables = tables
                 
-                # Save the selected tables using the main pipeline's merge function
-                print("🔧 Importing merge function...")
-                from pipeline.extract_main import merge_tables_and_export
-                print("🔧 Merge function imported successfully")
+                # Apply customer formatting like the main workflow
+                print("🔧 Importing functions from main pipeline...")
+                from pipeline.extract_main import merge_tables_and_export, save_tables_to_excel, process_and_format_tables
+                print("🔧 Functions imported successfully")
                 
-                # Generate output path
+                # Get company name from environment for customer formatting
+                company = os.environ.get("BOM_COMPANY", "")
+                print(f"🔧 Company for formatting: '{company}'")
+                
+                # Process and format tables with customer-specific formatting
+                print("🔧 Applying customer formatting...")
+                processed_tables = process_and_format_tables(selected_tables, company)
+                
+                if not processed_tables:
+                    print("❌ No tables passed processing/formatting")
+                    sys.stdout.flush()
+                    sys.exit(1)
+                
+                print(f"✅ Customer formatting applied - {len(processed_tables)} tables processed")
+                
+                # Generate output paths
                 pdf_dir = Path(pdf_path).parent
                 pdf_name = Path(pdf_path).stem
-                output_path = pdf_dir / f"{pdf_name}_merged.xlsx"
+                extracted_path = pdf_dir / f"{pdf_name}_extracted.xlsx"
+                merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
                 
-                print(f"🔧 Saving tables to: {output_path}")
-                success = merge_tables_and_export(selected_tables, str(output_path))
-                print(f"🔧 Save result: {success}")
+                print(f"🔧 Output paths debug:")
+                print(f"   PDF path: {pdf_path}")
+                print(f"   PDF dir: {pdf_dir}")
+                print(f"   PDF name: {pdf_name}")
+                print(f"   Extracted: {extracted_path}")
+                print(f"   Merged: {merged_path}")
+                print(f"   PDF dir exists: {pdf_dir.exists()}")
+                print(f"   PDF dir writable: {os.access(pdf_dir, os.W_OK)}")
                 
-                if success:
-                    print(f"✅ Tables saved to: {output_path}")
-                    sys.stdout.flush()  # Ensure output is displayed
-                    sys.exit(0)
+                # Save individual extracted tables first (preserves original table structure)
+                print(f"Saving individual extracted tables to: {extracted_path}")
+                extracted_success = save_tables_to_excel(selected_tables, str(extracted_path))
+                
+                if extracted_success:
+                    print(f"✅ Individual tables saved: {extracted_path}")
                 else:
-                    print("❌ Failed to save tables")
+                    print(f"❌ Failed to save individual tables to: {extracted_path}")
+                
+                # Save merged tables (combines all tables into one)
+                print(f"💾 Saving merged table to: {merged_path}")
+                print(f"🔧 Using processed_tables for merged file (count: {len(processed_tables)})")
+                
+                try:
+                    merged_success = merge_tables_and_export(processed_tables, str(merged_path))
+                    print(f"🔧 merge_tables_and_export returned: {merged_success}")
+                except Exception as merge_error:
+                    print(f"❌ merge_tables_and_export failed with exception: {merge_error}")
+                    import traceback
+                    traceback.print_exc()
+                    merged_success = False
+                
+                print(f"🔧 Final results:")
+                print(f"   extracted_success = {extracted_success}")
+                print(f"   merged_success = {merged_success}")
+                
+                if merged_success:
+                    print(f"✅ Merged table saved: {merged_path}")
+                    print(f"   File exists: {merged_path.exists()}")
+                    if merged_path.exists():
+                        print(f"   File size: {merged_path.stat().st_size} bytes")
+                    
+                    if extracted_success:
+                        print("✅ ROI extraction completed successfully - both files created")
+                        sys.stdout.flush()  # Ensure output is displayed
+                        sys.exit(0)
+                    else:
+                        print("⚠️ ROI extraction partially successful - merged file created but extracted file failed")
+                        sys.stdout.flush()  # Ensure output is displayed
+                        sys.exit(0)  # Still exit successfully since merged file was created
+                else:
+                    print("❌ Failed to save merged table")
+                    print(f"   merged_success = {merged_success}")
+                    print(f"   This is the reason for sys.exit(1)")
                     sys.stdout.flush()  # Ensure output is displayed
                     sys.exit(1)
             else:
