@@ -24,25 +24,35 @@ try:
     import ctypes
     from ctypes import wintypes
     
+    # Safe print function for executables
+    def safe_print(msg):
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            # Replace Unicode with ASCII
+            ascii_msg = (msg.replace('✅', '[OK]').replace('❌', '[ERROR]')
+                        .replace('⚠️', '[WARNING]').replace('🔧', '[DEBUG]'))
+            print(ascii_msg)
+    
     # Try to set DPI awareness for Windows 10/11
     try:
         # Windows 10, version 1703 and later
         ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-        print("✅ DPI awareness enabled (Per-Monitor V2)")
+        safe_print("[OK]DPI awareness enabled (Per-Monitor V2)")
     except (AttributeError, OSError):
         try:
             # Windows 8.1 and later
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
-            print("✅ DPI awareness enabled (Per-Monitor)")
+            safe_print("[OK] DPI awareness enabled (Per-Monitor)")
         except (AttributeError, OSError):
             try:
                 # Windows Vista and later
                 ctypes.windll.user32.SetProcessDPIAware()
-                print("✅ DPI awareness enabled (System)")
+                safe_print("[OK] DPI awareness enabled (System)")
             except (AttributeError, OSError):
-                print("⚠️ Could not enable DPI awareness")
+                safe_print("[WARNING] Could not enable DPI awareness")
 except ImportError:
-    print("⚠️ DPI awareness not available (not Windows)")
+    print("[WARNING] DPI awareness not available (not Windows)")
 
 # Import the pipeline modules directly for PyInstaller compatibility
 try:
@@ -572,7 +582,7 @@ class BoMApp:
         """Complete the progress and reset to ready state."""
         def _complete():
             self.progress_bar.stop()
-            self.progress_var.set("✅ Ready for next operation")
+            self.progress_var.set("[OK] Ready for next operation")
         
         # Ensure GUI update happens on main thread with error handling
         try:
@@ -609,11 +619,11 @@ class BoMApp:
         
         # Color coding based on level
         level_icons = {
-            "info": "ℹ️",
-            "success": "✅", 
-            "warning": "⚠️",
-            "error": "❌",
-            "step": "🔸"
+            "info": "[INFO]",
+            "success": "[OK]", 
+            "warning": "[WARNING]",
+            "error": "[ERROR]",
+            "step": "[STEP]"
         }
         
         icon = level_icons.get(level, "•")
@@ -703,7 +713,7 @@ Invalid formats:
             try:
                 # Import and show ROI picker on main thread
                 from gui.roi_picker import show_roi_picker
-                self.add_log_message("🐛 DEBUG: ROI picker imported successfully", "info")
+                self.add_log_message("[DEBUG] ROI picker imported successfully", "info")
                 
                 self.add_log_message("🐛 DEBUG: Calling show_roi_picker now...", "info")
                 roi_areas = show_roi_picker(pdf, pages, parent_window=self.root)
@@ -739,13 +749,13 @@ Invalid formats:
         os.environ["BOM_COMPANY"] = company
         os.environ["BOM_OUTPUT_DIRECTORY"] = self.output_directory.get() or ""
         os.environ["BOM_USE_ROI"] = str(self.use_roi.get()).lower()
-        
-        self.add_log_message(f"🐛 DEBUG: Environment variables set:", "info")
-        self.add_log_message(f"  BOM_PDF_PATH: {os.environ.get('BOM_PDF_PATH')}", "info")
-        self.add_log_message(f"  BOM_PAGE_RANGE: {os.environ.get('BOM_PAGE_RANGE')}", "info")
-        self.add_log_message(f"  BOM_COMPANY: {os.environ.get('BOM_COMPANY')}", "info")
-        self.add_log_message(f"  BOM_USE_ROI: {os.environ.get('BOM_USE_ROI')}", "info")
-        self.add_log_message(f"  BOM_ROI_AREAS: {os.environ.get('BOM_ROI_AREAS', 'NOT SET')}", "info")
+
+        self.add_log_message(f"[DEBUG] Environment variables set:", "info")
+        self.add_log_message(f"[DEBUG] BOM_PDF_PATH: {os.environ.get('BOM_PDF_PATH')}", "info")
+        self.add_log_message(f"[DEBUG] BOM_PAGE_RANGE: {os.environ.get('BOM_PAGE_RANGE')}", "info")
+        self.add_log_message(f"[DEBUG] BOM_COMPANY: {os.environ.get('BOM_COMPANY')}", "info")
+        self.add_log_message(f"[DEBUG] BOM_USE_ROI: {os.environ.get('BOM_USE_ROI')}", "info")
+        self.add_log_message(f"[DEBUG] BOM_ROI_AREAS: {os.environ.get('BOM_ROI_AREAS', 'NOT SET')}", "info")
 
         # Log the start of pipeline
         self.add_log_message("Starting BoM processing pipeline...", "step")
@@ -904,9 +914,9 @@ Invalid formats:
                 # Create a callback that will be called when review is needed
                 def review_callback(merged_df):
                     log_to_file("Review callback triggered from pipeline")
-                    print("📝 GUI REVIEW: Review callback called from pipeline")
-                    print(f"📝 GUI REVIEW: Merged DataFrame shape: {merged_df.shape}")
-                    print(f"📝 GUI REVIEW: Merged DataFrame columns: {merged_df.columns.tolist()}")
+                    print("GUI REVIEW: Review callback called from pipeline")
+                    print(f"GUI REVIEW: Merged DataFrame shape: {merged_df.shape}")
+                    print(f"GUI REVIEW: Merged DataFrame columns: {merged_df.columns.tolist()}")
                     self.add_log_message("Review callback triggered - showing review window", "step")
                     
                     # This will be called from the background thread, so we need to
@@ -928,16 +938,16 @@ Invalid formats:
                             
                             if reviewed_df is not None:
                                 result_container[0] = reviewed_df
-                                print(f"📝 GUI REVIEW: Review window completed, result shape: {reviewed_df.shape}")
+                                print(f"GUI REVIEW: Review window completed, result shape: {reviewed_df.shape}")
                                 self.add_log_message("Review window completed - user confirmed table", "success")
                                 self.add_log_message("Proceeding to price lookup...", "step")
                             else:
-                                print("📝 GUI REVIEW: Review window cancelled or returned None")
+                                print("GUI REVIEW: Review window cancelled or returned None")
                                 self.add_log_message("Review window cancelled", "warning")
                                 result_container[0] = merged_df  # Use original if cancelled
                                 
                         except Exception as e:
-                            print(f"📝 GUI REVIEW: Error in review window: {e}")
+                            print(f"GUI REVIEW: Error in review window: {e}")
                             self.add_log_message(f"Review window error: {e}", "error")
                             result_container[0] = merged_df  # Use original on error
                             review_error[0] = e
@@ -946,22 +956,22 @@ Invalid formats:
                             review_event.set()
                     
                     # Schedule the review window on the main thread
-                    print("📝 GUI REVIEW: Scheduling review window on main thread")
+                    print("GUI REVIEW: Scheduling review window on main thread")
                     try:
                         self.root.after(0, show_review_on_main_thread)
                     except RuntimeError as e:
-                        print(f"📝 GUI REVIEW: Could not schedule review window: {e}")
+                        print(f"GUI REVIEW: Could not schedule review window: {e}")
                         # Try direct call as fallback
                         try:
                             show_review_on_main_thread()
                         except Exception as direct_error:
-                            print(f"📝 GUI REVIEW: Direct call also failed: {direct_error}")
+                            print(f"GUI REVIEW: Direct call also failed: {direct_error}")
                             result_container[0] = merged_df
                             review_event.set()
                             return result_container[0]
                     
                     # Wait for the review to complete using threading event
-                    print("📝 GUI REVIEW: Waiting for review to complete...")
+                    print("GUI REVIEW: Waiting for review to complete...")
                     review_event.wait()
                     
                     # Give the GUI a moment to update after the review window closes
@@ -969,10 +979,10 @@ Invalid formats:
                     
                     # Check if there was an error
                     if review_error[0]:
-                        print(f"📝 GUI REVIEW: Review completed with error: {review_error[0]}")
+                        print(f"GUI REVIEW: Review completed with error: {review_error[0]}")
                         self.add_log_message(f"Review completed with error: {review_error[0]}", "error")
                     else:
-                        print("📝 GUI REVIEW: Review completed successfully")
+                        safe_print("[DEBUG] GUI REVIEW: Review completed successfully")
                         self.add_log_message("Review completed - continuing with price lookup", "info")
                     
                     return result_container[0]
@@ -1046,6 +1056,66 @@ Invalid formats:
                     print(f"[GUI UPDATE] Could not schedule success dialog: {e}")
                     print(f"SUCCESS: {success_message}")
                 
+            except RuntimeError as runtime_error:
+                # Handle dependency errors specifically
+                error_message = str(runtime_error)
+                if "Missing critical dependencies" in error_message:
+                    # Stop progress on dependency error
+                    self.stop_progress("Missing dependencies")
+                    self.add_log_message(f"Dependency error: {error_message}", "error")
+                    
+                    # Schedule the dependency error dialog on the main thread
+                    def show_dependency_error():
+                        try:
+                            CopyableErrorDialog(
+                                self.root,
+                                "Missing Dependencies",
+                                "The application cannot run due to missing dependencies.\n\n" +
+                                "Most likely cause:\n" +
+                                "• Java is not installed or not in your system PATH\n\n" +
+                                "Java is required for PDF table extraction (Tabula library).\n\n" +
+                                "To fix this:\n" +
+                                "1. Install Java JRE or JDK from https://java.com\n" +
+                                "2. Ensure Java is added to your system PATH\n" +
+                                "3. Restart the application\n\n" +
+                                "You can test Java installation by opening Command Prompt and typing: java -version\n\n" +
+                                f"Technical details:\n{error_message}",
+                                error_message
+                            )
+                        except Exception as gui_error:
+                            # Fallback if GUI fails
+                            messagebox.showerror(
+                                "Missing Dependencies", 
+                                f"Critical dependencies missing: {error_message}"
+                            )
+                    
+                    try:
+                        self.root.after(0, show_dependency_error)
+                    except RuntimeError as e:
+                        print(f"[GUI UPDATE] Could not schedule dependency error dialog: {e}")
+                        print(f"DEPENDENCY ERROR: {error_message}")
+                else:
+                    # Handle other runtime errors normally
+                    self.stop_progress("Runtime error")
+                    self.add_log_message(f"Runtime error: {error_message}", "error")
+                    
+                    def show_runtime_error():
+                        try:
+                            CopyableErrorDialog(
+                                self.root,
+                                "Runtime Error",
+                                f"A runtime error occurred:\n\n{error_message}",
+                                error_message
+                            )
+                        except Exception as gui_error:
+                            messagebox.showerror("Runtime Error", f"Runtime error: {error_message}")
+                    
+                    try:
+                        self.root.after(0, show_runtime_error)
+                    except RuntimeError as e:
+                        print(f"[GUI UPDATE] Could not schedule runtime error dialog: {e}")
+                        print(f"RUNTIME ERROR: {error_message}")
+                        
             except Exception as e:
                 # Stop progress on error
                 self.stop_progress("Pipeline failed")
@@ -1262,16 +1332,16 @@ if __name__ == "__main__":
                     
                     # Store reference to prevent garbage collection
                     root._icon_photo = photo
-                    print(f"✅ High-quality icon loaded from: {icon_path}")
+                    print(f"[OK] High-quality icon loaded from: {icon_path}")
                 except ImportError:
-                    print(f"✅ Basic icon loaded from: {icon_path} (PIL not available for high-quality mode)")
+                    print(f"[OK] Basic icon loaded from: {icon_path} (PIL not available for high-quality mode)")
                 except Exception as e:
-                    print(f"✅ Basic icon loaded from: {icon_path} (high-quality mode failed: {e})")
+                    print(f"[OK] Basic icon loaded from: {icon_path} (high-quality mode failed: {e})")
             else:
-                print(f"⚠️ Icon not found at: {icon_path}")
+                print(f"[WARNING] Icon not found at: {icon_path}")
         except Exception as e:
-            print(f"⚠️ Could not load application icon: {e}")
-        
+            print(f"[WARNING] Could not load application icon: {e}")
+
         # Add proper cleanup handler
         def on_closing():
             try:

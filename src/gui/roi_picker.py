@@ -76,22 +76,22 @@ class ROIPicker:
             Dict mapping page numbers to tabula areas [top, left, bottom, right] in points,
             or None if cancelled.
         """
-        print("🐛 ROI DEBUG: show_picker called")
+        print("ROI DEBUG: show_picker called")
         try:
             # Open PDF document
-            print("🐛 ROI DEBUG: Opening PDF document")
+            print("ROI DEBUG: Opening PDF document")
             self.pdf_doc = fitz.open(self.pdf_path)
             
             # Create the picker window
-            print("🐛 ROI DEBUG: Creating picker window")
+            print("ROI DEBUG: Creating picker window")
             self._create_picker_window()
             
             # Start with the first page
-            print("🐛 ROI DEBUG: Loading current page")
+            print("ROI DEBUG: Loading current page")
             self._load_current_page()
             
             # Final window setup - ensure everything is properly sized
-            print("🐛 ROI DEBUG: Updating window layout")
+            print("ROI DEBUG: Updating window layout")
             self.root.update_idletasks()
             
             # Force window to update layout before starting
@@ -99,10 +99,10 @@ class ROIPicker:
             self._adjust_figure_size()
             
             # Run the GUI
-            print("🐛 ROI DEBUG: Starting wait_window (modal dialog)")
+            print("ROI DEBUG: Starting wait_window (modal dialog)")
             self.root.wait_window()  # Use wait_window instead of mainloop for modal behavior
             
-            print("🐛 ROI DEBUG: wait_window ended")
+            print("ROI DEBUG: wait_window ended")
             
             # Clean up
             if self.pdf_doc:
@@ -110,14 +110,14 @@ class ROIPicker:
             
             # Return results
             if self.is_cancelled:
-                print("🐛 ROI DEBUG: Returning None (cancelled)")
+                print("ROI DEBUG: Returning None (cancelled)")
                 return None
             else:
-                print(f"🐛 ROI DEBUG: Returning tabula_areas: {self.tabula_areas}")
+                print(f"ROI DEBUG: Returning tabula_areas: {self.tabula_areas}")
                 return self.tabula_areas
                 
         except Exception as e:
-            print(f"🐛 ROI DEBUG: Exception in show_picker: {e}")
+            print(f"ROI DEBUG: Exception in show_picker: {e}")
             if self.pdf_doc:
                 self.pdf_doc.close()
             messagebox.showerror("Error", f"Failed to open PDF or create picker: {str(e)}")
@@ -225,7 +225,7 @@ class ROIPicker:
         
         self.clear_button = ttk.Button(
             left_buttons, 
-            text="🗑 Clear Selection", 
+            text="Clear Selection", 
             command=self._clear_selection,
             state=tk.DISABLED
         )
@@ -234,7 +234,7 @@ class ROIPicker:
         # Add fit to window button
         self.fit_button = ttk.Button(
             left_buttons, 
-            text="🔍 Fit to Window", 
+            text="Fit to Window", 
             command=self._fit_to_window
         )
         self.fit_button.pack(side=tk.LEFT, padx=(0, 10))
@@ -253,18 +253,9 @@ class ROIPicker:
         )
         self.confirm_button.pack(side=tk.LEFT, padx=(0, 10))
         
-        self.finish_button = ttk.Button(
-            right_buttons, 
-            text="🏁 Finish", 
-            command=self._on_finish,
-            state=tk.DISABLED,
-            width=12
-        )
-        self.finish_button.pack(side=tk.LEFT, padx=(0, 10))
-        
         ttk.Button(
             right_buttons, 
-            text="❌ Cancel", 
+            text="Cancel", 
             command=self._on_cancel,
             width=10
         ).pack(side=tk.LEFT)
@@ -535,15 +526,15 @@ class ROIPicker:
     
     def _on_cancel(self):
         """Handle cancel button click."""
-        print("🐛 ROI DEBUG: _on_cancel called")
+        print("ROI DEBUG: _on_cancel called")
         self.is_cancelled = True
         self.root.destroy()  # This will end the wait_window()
     
     def _on_finish(self):
         """Handle finish button click."""
-        print("🐛 ROI DEBUG: _on_finish called")
+        print("ROI DEBUG: _on_finish called")
         if not self.tabula_areas:
-            print("🐛 ROI DEBUG: No table areas selected, showing warning")
+            print("ROI DEBUG: No table areas selected, showing warning")
             messagebox.showwarning("Warning", "No table areas selected.")
             return
         
@@ -553,19 +544,19 @@ class ROIPicker:
             area = self.tabula_areas[page_num]
             summary += f"Page {page_num}: [{area[0]:.1f}, {area[1]:.1f}, {area[2]:.1f}, {area[3]:.1f}]\n"
         
-        print(f"🐛 ROI DEBUG: Showing confirmation dialog with summary: {summary}")
+        print(f"ROI DEBUG: Showing confirmation dialog with summary: {summary}")
         result = messagebox.askyesno(
             "Confirm Selections", 
             summary + "\nProceed with these selections?"
         )
         
-        print(f"🐛 ROI DEBUG: User confirmation result: {result}")
+        print(f"ROI DEBUG: User confirmation result: {result}")
         if result:
-            print("🐛 ROI DEBUG: Setting is_completed=True and destroying window")
+            print("ROI DEBUG: Setting is_completed=True and destroying window")
             self.is_completed = True
             self.root.destroy()  # This will end the wait_window()
         else:
-            print("🐛 ROI DEBUG: User clicked No, keeping window open")
+            print("ROI DEBUG: User clicked No, keeping window open")
         # If user clicks "No", keep the window open for more selections
 
 

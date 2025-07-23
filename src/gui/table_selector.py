@@ -75,13 +75,13 @@ def show_table_selector(tables):
         if existing_root and existing_root.winfo_exists():
             # Use Toplevel to avoid conflicts with existing Tk instance
             root = ttk.Toplevel(existing_root)
-            print("🔧 TABLE SELECTOR: Using Toplevel window (existing Tk root found)")
+            print("TABLE SELECTOR: Using Toplevel window (existing Tk root found)")
         else:
             raise Exception("No existing root")
     except:
         # Create new root window if none exists - use ttkbootstrap for dark theme
         root = ttk.Window(themename="darkly")
-        print("🔧 TABLE SELECTOR: Created new ttkbootstrap window with dark theme")
+        print("TABLE SELECTOR: Created new ttkbootstrap window with dark theme")
     
     root.title("Select Tables to Keep")
     # Maximize window (zoomed) to show minimize/maximize/close buttons
@@ -102,7 +102,7 @@ def show_table_selector(tables):
 
     title_label = ttk.Label(
         instructions_frame, 
-        text="📋 Table Selection", 
+        text="Table Selection", 
         font=('Segoe UI', 16, 'bold'),
         bootstyle="primary"
     )
@@ -111,7 +111,7 @@ def show_table_selector(tables):
     instructions_label = ttk.Label(
         instructions_frame, 
         text="Please review the tables below and CHECK the ones you want to include in the final output.\n"
-             "⚠️  All tables start UNSELECTED - you must check the boxes for tables you want to keep.",
+             "All tables start UNSELECTED - you must check the boxes for tables you want to keep.",
         font=('Segoe UI', 10),
         bootstyle="info",
         justify=tk.LEFT
@@ -187,7 +187,7 @@ def show_table_selector(tables):
             
             empty_label = ttk.Label(
                 empty_frame, 
-                text="📭 Empty Table", 
+                text="Empty Table", 
                 font=('Segoe UI', 12),
                 bootstyle="secondary"
             )
@@ -267,7 +267,7 @@ def show_table_selector(tables):
                 # Use a more generous minimum width
                 column_widths[col] = max(col_name_width, content_width, 180)  # Minimum 180px
             
-            print(f"🔧 TABLE DISPLAY: Column widths calculated: {column_widths}")
+            print(f"TABLE DISPLAY: Column widths calculated: {column_widths}")
             
             # Configure pandastable options for great visibility
             # Simplified options to avoid Tkinter image conflicts
@@ -289,11 +289,11 @@ def show_table_selector(tables):
                 'x_start': 0,                 # Set left margin to 0
             }
             
-            print(f"🔧 TABLE DISPLAY: About to create pandastable with options: {table_options}")
-            print(f"🔧 TABLE DISPLAY: Table frame exists: {table_frame.winfo_exists()}")
-            print(f"🔧 TABLE DISPLAY: Root window: {root}")
-            print(f"🔧 TABLE DISPLAY: Display table shape: {display_table.shape}")
-            print(f"🔧 TABLE DISPLAY: Display table columns: {list(display_table.columns)}")
+            print(f"TABLE DISPLAY: About to create pandastable with options: {table_options}")
+            print(f"TABLE DISPLAY: Table frame exists: {table_frame.winfo_exists()}")
+            print(f"TABLE DISPLAY: Root window: {root}")
+            print(f"TABLE DISPLAY: Display table shape: {display_table.shape}")
+            print(f"TABLE DISPLAY: Display table columns: {list(display_table.columns)}")
             
             # Create table with custom options - use try-catch for safer creation
             try:
@@ -313,13 +313,13 @@ def show_table_selector(tables):
                     pt.parentframe.columnconfigure(0, weight=1)  # Column 0 gets the weight
                     pt.parentframe.columnconfigure(1, weight=0)  # Column 1 gets no weight
                     
-                    print(f"🔧 TABLE DISPLAY: Successfully hid row header and reconfigured grid layout")
+                    print(f"TABLE DISPLAY: Successfully hid row header and reconfigured grid layout")
                 except Exception as hide_error:
-                    print(f"🔧 TABLE DISPLAY: Could not hide row header: {hide_error}")
+                    print(f"TABLE DISPLAY: Could not hide row header: {hide_error}")
                 
-                print(f"🔧 TABLE DISPLAY: Created pandastable successfully - shape: {display_table.shape}")
+                print(f"TABLE DISPLAY: Created pandastable successfully - shape: {display_table.shape}")
             except Exception as table_error:
-                print(f"🔧 TABLE DISPLAY: Error creating pandastable: {table_error}")
+                print(f"TABLE DISPLAY: Error creating pandastable: {table_error}")
                 # Try with absolute minimal options as fallback
                 minimal_options = {
                     'cellwidth': 200,    # Wide cells
@@ -333,7 +333,7 @@ def show_table_selector(tables):
                     'showrowheader': False,  # CRITICAL: Hide row header to eliminate grey space
                     'x_start': 0,         # Set left margin to 0
                 }
-                print(f"🔧 TABLE DISPLAY: Trying with minimal options: {minimal_options}")
+                print(f"TABLE DISPLAY: Trying with minimal options: {minimal_options}")
                 pt = Table(table_frame, dataframe=display_table, **minimal_options)
                 pt.show()
                 
@@ -350,11 +350,11 @@ def show_table_selector(tables):
                     pt.parentframe.columnconfigure(0, weight=1)  # Column 0 gets the weight
                     pt.parentframe.columnconfigure(1, weight=0)  # Column 1 gets no weight
                     
-                    print(f"🔧 TABLE DISPLAY: Successfully hid row header and reconfigured grid layout (minimal options)")
+                    print(f"TABLE DISPLAY: Successfully hid row header and reconfigured grid layout (minimal options)")
                 except Exception as hide_error:
-                    print(f"🔧 TABLE DISPLAY: Could not hide row header (minimal options): {hide_error}")
+                    print(f"TABLE DISPLAY: Could not hide row header (minimal options): {hide_error}")
                 
-                print(f"🔧 TABLE DISPLAY: Created pandastable with minimal options")
+                print(f"TABLE DISPLAY: Created pandastable with minimal options")
             
             # Apply custom column widths after table is created
             try:
@@ -370,16 +370,16 @@ def show_table_selector(tables):
                     
                     # Force redraw to apply the new column widths
                     pt.redraw()
-                    print(f"🔧 TABLE DISPLAY: Applied custom column widths")
+                    print(f"TABLE DISPLAY: Applied custom column widths")
                 else:
-                    print(f"🔧 TABLE DISPLAY: This pandastable version doesn't support column width adjustment")
+                    print(f"TABLE DISPLAY: This pandastable version doesn't support column width adjustment")
                     # Try alternative method if available
                     if hasattr(pt, 'adjustColumnWidths'):
                         pt.adjustColumnWidths()
-                        print(f"🔧 TABLE DISPLAY: Used adjustColumnWidths method")
-                
+                        print(f"TABLE DISPLAY: Used adjustColumnWidths method")
+
             except Exception as width_error:
-                print(f"🔧 TABLE DISPLAY: Could not apply custom column widths: {width_error}")
+                print(f"TABLE DISPLAY: Could not apply custom column widths: {width_error}")
                 # Try fallback method
                 try:
                     if hasattr(pt.model, 'columnwidths'):
@@ -387,19 +387,19 @@ def show_table_selector(tables):
                         for col in display_table.columns:
                             pt.model.columnwidths[col] = 250  # Increased from 200
                         pt.redraw()
-                        print(f"🔧 TABLE DISPLAY: Applied uniform wider column widths")
+                        print(f"TABLE DISPLAY: Applied uniform wider column widths")
                     else:
-                        print(f"🔧 TABLE DISPLAY: Column width adjustment not supported in this pandastable version")
+                        print(f"TABLE DISPLAY: Column width adjustment not supported in this pandastable version")
                 except Exception as fallback_error:
-                    print(f"🔧 TABLE DISPLAY: Could not apply fallback widths: {fallback_error}")
+                    print(f"TABLE DISPLAY: Could not apply fallback widths: {fallback_error}")
             
         except Exception as e:
-            print(f"🔧 TABLE DISPLAY: Could not create pandastable: {e}")
-            print(f"🔧 TABLE DISPLAY: Creating fallback display...")
+            print(f"TABLE DISPLAY: Could not create pandastable: {e}")
+            print(f"TABLE DISPLAY: Creating fallback display...")
             
             # Try a simple Treeview as secondary fallback
             try:
-                print(f"🔧 TABLE DISPLAY: Attempting simple Treeview fallback...")
+                print(f"TABLE DISPLAY: Attempting simple Treeview fallback...")
                 
                 # Create a simple frame for Treeview
                 tree_frame = tk.Frame(table_frame, bg='white')
@@ -442,14 +442,14 @@ def show_table_selector(tables):
                 
                 if max_display_rows < len(display_table):
                     truncate_label = tk.Label(frame, 
-                                            text=f"⚠️ Showing first {max_display_rows} of {len(display_table)} rows",
+                                            text=f"Showing first {max_display_rows} of {len(display_table)} rows",
                                             font=("Arial", 9), fg='orange', bg='white')
                     truncate_label.pack(pady=(5, 0))
                 
-                print(f"🔧 TABLE DISPLAY: Created Treeview fallback successfully")
+                print(f"TABLE DISPLAY: Created Treeview fallback successfully")
                 
             except Exception as tree_error:
-                print(f"🔧 TABLE DISPLAY: Treeview fallback also failed: {tree_error}")
+                print(f"TABLE DISPLAY: Treeview fallback also failed: {tree_error}")
                 # Final fallback to text display
                 text_widget = tk.Text(table_frame, wrap='none', font=("Courier", 9))
                 
@@ -474,7 +474,7 @@ def show_table_selector(tables):
                 # Add a label to show this is text fallback
                 fallback_label = ttk.Label(
                     frame, 
-                    text="⚠️ Using text display (table widgets not available)",
+                    text="[WARNING] Using text display (table widgets not available)",
                     font=("Segoe UI", 9), 
                     bootstyle="warning"
                 )
@@ -540,7 +540,7 @@ def show_table_selector(tables):
     # Add the buttons now that the functions are properly defined
     select_all_btn = ttk.Button(
         control_frame, 
-        text="✓ Select All", 
+        text="Select All", 
         command=select_all, 
         bootstyle="success",
         width=12
@@ -549,7 +549,7 @@ def show_table_selector(tables):
     
     clear_all_btn = ttk.Button(
         control_frame, 
-        text="✗ Clear All", 
+        text="Clear All", 
         command=clear_all, 
         bootstyle="danger",
         width=12
@@ -562,7 +562,7 @@ def show_table_selector(tables):
     
     continue_button = ttk.Button(
         button_frame, 
-        text="🚀 Continue with Selected Tables", 
+        text="Continue with Selected Tables", 
         command=on_submit,
         bootstyle="primary",
         width=30
@@ -583,11 +583,11 @@ def show_table_selector(tables):
         try:
             count = sum(var.get() for var in var_list)
             if count == 0:
-                selection_label.config(text="⚠️  No tables selected", bootstyle="danger")
+                selection_label.config(text="[WARNING] No tables selected", bootstyle="danger")
             elif count == 1:
-                selection_label.config(text="✓ 1 table selected", bootstyle="success")
+                selection_label.config(text="[OK] 1 table selected", bootstyle="success")
             else:
-                selection_label.config(text=f"✓ {count} tables selected", bootstyle="success")
+                selection_label.config(text=f"[OK] {count} tables selected", bootstyle="success")
             
             # Debug output every 10th update to avoid spam
             if hasattr(update_selection_count, 'debug_counter'):
@@ -600,8 +600,8 @@ def show_table_selector(tables):
             
         except Exception as e:
             print(f"DEBUG: Error in update_selection_count: {e}")
-            selection_label.config(text="⚠️  Error reading selections", bootstyle="danger")
-        
+            selection_label.config(text="[WARNING] Error reading selections", bootstyle="danger")
+
         # Schedule next update
         root.after(500, update_selection_count)
     

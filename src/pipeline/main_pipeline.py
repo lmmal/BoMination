@@ -16,6 +16,77 @@ if getattr(sys, 'frozen', False):
 else:
     SCRIPT_DIR = Path(__file__).parent
 
+def check_all_dependencies():
+    """
+    Check all required dependencies for the application.
+    Returns (can_run, dependency_status, missing_critical, warnings)
+    """
+    dependency_status = {}
+    missing_critical = []
+    warnings = []
+    
+    print("[INFO] Checking critical dependencies...")
+    
+    # Check Java (critical for Tabula)
+    try:
+        from pipeline.validation_utils import check_java_installation
+        java_ok, java_version, java_error = check_java_installation()
+        dependency_status['Java'] = {'available': java_ok, 'version': java_version, 'error': java_error}
+        if not java_ok:
+            missing_critical.append('Java')
+            warnings.append(f"Java not found: {java_error}")
+            print(f"[ERROR] Java dependency missing: {java_error}")
+        else:
+            print(f"[OK] Java available: {java_version}")
+    except ImportError as import_error:
+        dependency_status['Java'] = {'available': False, 'version': None, 'error': f"Import failed: {import_error}"}
+        missing_critical.append('Java')
+        warnings.append(f"Java check failed - import error: {import_error}")
+        print(f"[ERROR] Java check import failed: {import_error}")
+    except Exception as e:
+        dependency_status['Java'] = {'available': False, 'version': None, 'error': str(e)}
+        missing_critical.append('Java')
+        warnings.append(f"Java check failed: {e}")
+        print(f"[ERROR] Java check failed: {e}")
+    
+    # Check OCR dependencies (optional for most customers)
+    try:
+        from pipeline.ocr_preprocessor import check_ocr_dependencies
+        has_ocr_deps, missing_ocr_deps, dep_messages, install_instructions = check_ocr_dependencies()
+        dependency_status['OCR'] = {
+            'available': has_ocr_deps, 
+            'missing': missing_ocr_deps, 
+            'messages': dep_messages
+        }
+        if not has_ocr_deps:
+            warnings.append(f"OCR dependencies missing: {', '.join(missing_ocr_deps)}")
+            warnings.append("OCR features will be unavailable but basic extraction will work")
+            print(f"[WARNING] OCR dependencies missing: {', '.join(missing_ocr_deps)}")
+        else:
+            print(f"[OK] All OCR dependencies available")
+    except ImportError as import_error:
+        dependency_status['OCR'] = {'available': False, 'error': f"Import failed: {import_error}"}
+        warnings.append(f"OCR dependency check failed - import error: {import_error}")
+        print(f"[WARNING] OCR check import failed: {import_error}")
+    except Exception as e:
+        dependency_status['OCR'] = {'available': False, 'error': str(e)}
+        warnings.append(f"OCR dependency check failed: {e}")
+        print(f"[WARNING] OCR check failed: {e}")
+    
+    # Determine if the application can run
+    can_run = len(missing_critical) == 0
+    if not can_run:
+        print(f"[CRITICAL ERROR] Missing critical dependencies: {', '.join(missing_critical)}")
+        print(f"[CRITICAL ERROR] The application cannot run without these dependencies.")
+        if 'Java' in missing_critical:
+            print(f"[CRITICAL ERROR] Java is required for PDF table extraction (Tabula library).")
+            print(f"[CRITICAL ERROR] Please install Java JRE/JDK and ensure it's in your system PATH.")
+            print(f"[CRITICAL ERROR] You can test Java by opening Command Prompt and typing: java -version")
+    else:
+        print(f"[OK] All critical dependencies satisfied - application can run")
+    
+    return can_run, dependency_status, missing_critical, warnings
+
 def run_extract_bom_with_roi_orchestration():
     """
     Run BoM extraction with ROI orchestration that handles fallbacks properly.
@@ -25,6 +96,21 @@ def run_extract_bom_with_roi_orchestration():
     2. extract_bom_cam.py handles only camelot-specific extraction  
     3. main_pipeline.py orchestrates the workflow and fallbacks
     """
+    print("=== BoMination Dependency Check (ROI Mode) ===")
+    can_run, dependency_status, missing_critical, warnings = check_all_dependencies()
+    
+    # Show warnings for missing optional dependencies
+    for warning in warnings:
+        print(f"[WARNING] {warning}")
+    
+    # If critical dependencies are missing, exit gracefully
+    if not can_run:
+        print(f"[CRITICAL ERROR] Cannot continue due to missing critical dependencies.")
+        print(f"[CRITICAL ERROR] Application will now exit.")
+        # Instead of sys.exit(), raise an exception that can be caught by the GUI
+        raise RuntimeError(f"Missing critical dependencies: {', '.join(missing_critical)}")
+    
+    print("=== Starting ROI BoM Extraction ===")
     print("STEP 1: Extracting BoM tables from PDF with ROI orchestration...")
     pdf_path = os.environ.get("BOM_PDF_PATH")
     pages = os.environ.get("BOM_PAGE_RANGE")
@@ -37,10 +123,10 @@ def run_extract_bom_with_roi_orchestration():
         # If not using ROI, use the standard extraction
         return run_extract_bom()
     
-    print("📍 Using ROI-based extraction with orchestration...")
+    print("[TARGET] Using ROI-based extraction with orchestration...")
     
     # Step 1: Try tabula-only ROI extraction
-    print("📊 STEP 1: Attempting tabula ROI extraction...")
+    print("[DATA] STEP 1: Attempting tabula ROI extraction...")
     env = os.environ.copy()
     env["BOM_PDF_PATH"] = str(pdf_path or "")
     env["BOM_PAGE_RANGE"] = str(pages or "")
@@ -57,10 +143,10 @@ def run_extract_bom_with_roi_orchestration():
         # Add timeout to prevent hanging
         result = subprocess.run(command, env=env, capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=300)
     except subprocess.TimeoutExpired:
-        print("❌ STEP 1 TIMEOUT: Tabula ROI extraction timed out after 5 minutes")
+        print("[ERROR] STEP 1 TIMEOUT: Tabula ROI extraction timed out after 5 minutes")
         result = subprocess.CompletedProcess(command, 1, "", "Process timed out")
     except Exception as e:
-        print(f"❌ STEP 1 ERROR: Subprocess failed: {e}")
+        print(f"[ERROR] STEP 1 ERROR: Subprocess failed: {e}")
         result = subprocess.CompletedProcess(command, 1, "", str(e))
     
     print(result.stdout)
@@ -71,18 +157,18 @@ def run_extract_bom_with_roi_orchestration():
     merged_path = pdf_dir / f"{pdf_name}_merged.xlsx"
     
     if result.returncode == 0 and merged_path.exists():
-        print("✅ STEP 1 SUCCESS: Tabula ROI extraction completed")
+        print("[OK] STEP 1 SUCCESS: Tabula ROI extraction completed")
         return merged_path
-    
-    print("❌ STEP 1 FAIL: Tabula ROI extraction failed")
+    else:
+        print("[ERROR] STEP 1 FAILED: Tabula ROI extraction")
     
     # Step 2: Try camelot ROI extraction as fallback
-    print("📊 STEP 2: Attempting camelot ROI extraction fallback...")
+    print("[DATA] STEP 2: Attempting camelot ROI extraction fallback...")
     
     # Check if ROI areas are available
     roi_areas = os.environ.get("BOM_ROI_AREAS")
     if not roi_areas:
-        print("❌ STEP 2 FAIL: No ROI areas available for camelot fallback")
+        print("[ERROR] STEP 2 FAIL: No ROI areas available for camelot fallback")
         raise subprocess.CalledProcessError(1, command, output=result.stdout, stderr=result.stderr)
     
     try:
@@ -94,13 +180,13 @@ def run_extract_bom_with_roi_orchestration():
         all_tables = []
         
         for page_num, area in roi_areas.items():
-            print(f"📊 Extracting from page {page_num} using Camelot...")
+            print(f"[DATA] Extracting from page {page_num} using Camelot...")
             
             try:
                 # Convert single ROI area to list format expected by extract_tables_with_camelot_roi
                 roi_area_list = [area]  # Function expects a list of ROI areas
                 
-                print(f"🎯 Using ROI area: {area}")
+                print(f"[TARGET] Using ROI area: {area}")
                 
                 # Use camelot ROI extraction function
                 camelot_tables = extract_tables_with_camelot_roi(pdf_path, str(page_num), roi_areas=roi_area_list)
@@ -108,49 +194,87 @@ def run_extract_bom_with_roi_orchestration():
                 if camelot_tables:
                     for i, table in enumerate(camelot_tables):
                         if not table.empty and table.shape[0] >= 1 and table.shape[1] >= 1:
-                            print(f"    ✅ Extracted table {i+1}: {table.shape[0]}×{table.shape[1]} (Camelot ROI)")
+                            print(f"    [OK] Extracted table {i+1}: {table.shape[0]}×{table.shape[1]} (Camelot ROI)")
                             all_tables.append(table)
                         else:
-                            print(f"    ❌ Camelot table {i+1} too small or empty: {table.shape[0]}×{table.shape[1]}")
+                            print(f"    [ERROR] Camelot table {i+1} too small or empty: {table.shape[0]}×{table.shape[1]}")
                 else:
-                    print(f"    ❌ No Camelot tables from page {page_num}")
+                    print(f"    [ERROR] No Camelot tables from page {page_num}")
                     
             except Exception as e:
-                print(f"    ❌ Camelot extraction failed for page {page_num}: {e}")
+                print(f"    [ERROR] Camelot extraction failed for page {page_num}: {e}")
                 continue
         
         if all_tables:
-            print(f"✅ STEP 2 SUCCESS: Camelot ROI extraction found {len(all_tables)} tables")
+            print(f"[OK] STEP 2 SUCCESS: Camelot ROI extraction found {len(all_tables)} tables")
             
             # Always show table selection interface for debugging, even with single table
-            print("📋 Tables found - showing selection interface...")
+            print("[LIST] Tables found - showing selection interface...")
             from gui.table_selector import show_table_selector
             selected_tables = show_table_selector(all_tables)
             
             if not selected_tables:
-                print("❌ No tables selected by user")
+                print("[ERROR] No tables selected by user")
                 raise subprocess.CalledProcessError(1, command, output="", stderr="No tables selected by user")
             
-            print(f"📋 User selected {len(selected_tables)} tables")
+            print(f"[LIST] User selected {len(selected_tables)} tables")
             
-            # Save the selected tables using the same logic as extract_bom_tab
-            success = merge_tables_and_export(selected_tables, str(merged_path), "Combined_BoM", company)
+            # Apply customer formatting to selected tables first (missing step)
+            print(f"[FORMAT] Applying customer formatting for company: {company}")
+            from pipeline.extract_main import process_and_format_tables
+            formatted_tables = process_and_format_tables(selected_tables, company)
+            
+            if not formatted_tables:
+                print("[ERROR] Customer formatting failed")
+                raise subprocess.CalledProcessError(1, command, output="", stderr="Customer formatting failed")
+            
+            print(f"[OK] Customer formatting applied successfully to {len(formatted_tables)} tables")
+            
+            # Save individual extracted tables first (like extract_bom_tab does)
+            extracted_path = pdf_dir / f"{pdf_name}_extracted.xlsx"
+            print(f"💾 Saving individual extracted tables to: {extracted_path}")
+            from pipeline.extract_main import save_tables_to_excel
+            extracted_success = save_tables_to_excel(formatted_tables, str(extracted_path))
+            
+            if extracted_success:
+                print(f"[OK] Individual tables saved: {extracted_path}")
+            else:
+                print(f"[ERROR] Failed to save individual tables to: {extracted_path}")
+            
+            # Save the formatted tables using the same logic as extract_bom_tab
+            print(f"💾 Saving merged table to: {merged_path}")
+            success = merge_tables_and_export(formatted_tables, str(merged_path), "Combined_BoM", company)
             
             if success:
-                print(f"✅ Camelot ROI extraction completed successfully!")
+                print(f"[OK] Camelot ROI extraction completed successfully!")
                 return merged_path
             else:
-                print("❌ Failed to save merged tables from camelot")
+                print("[ERROR] Failed to save merged tables from camelot")
                 raise subprocess.CalledProcessError(1, command, output="", stderr="Failed to save merged tables")
         else:
-            print("❌ STEP 2 FAIL: Camelot ROI extraction found no tables")
+            print("[ERROR] STEP 2 FAIL: Camelot ROI extraction found no tables")
             raise subprocess.CalledProcessError(1, command, output=result.stdout, stderr=result.stderr)
             
     except Exception as e:
-        print(f"❌ STEP 2 ERROR: Camelot ROI orchestration failed: {e}")
+        print(f"[ERROR] STEP 2 ERROR: Camelot ROI orchestration failed: {e}")
         raise subprocess.CalledProcessError(1, command, output=result.stdout, stderr=str(e))
 
 def run_extract_bom():
+    print("=== BoMination Dependency Check ===")
+    can_run, dependency_status, missing_critical, warnings = check_all_dependencies()
+    
+    # Show warnings for missing optional dependencies
+    for warning in warnings:
+        print(f"[WARNING] {warning}")
+    
+    # If critical dependencies are missing, exit gracefully
+    if not can_run:
+        print(f"[CRITICAL ERROR] Cannot continue due to missing critical dependencies.")
+        print(f"[CRITICAL ERROR] Application will now exit.")
+        # Instead of sys.exit(), raise an exception that can be caught by the GUI
+        raise RuntimeError(f"Missing critical dependencies: {', '.join(missing_critical)}")
+    
+    print("=== Starting BoM Extraction ===")
     print("STEP 1: Extracting BoM tables from PDF...")
     pdf_path = os.environ.get("BOM_PDF_PATH")
     pages = os.environ.get("BOM_PAGE_RANGE")
@@ -311,6 +435,21 @@ def run_main_pipeline_direct(pdf_path, pages, company, output_directory, tabula_
         output_directory (str): Output directory for results
         tabula_mode (str): Tabula extraction mode - 'conservative', 'balanced', or 'aggressive'
     """
+    print("=== BoMination Dependency Check (Direct Mode) ===")
+    can_run, dependency_status, missing_critical, warnings = check_all_dependencies()
+    
+    # Show warnings for missing optional dependencies
+    for warning in warnings:
+        print(f"[WARNING] {warning}")
+    
+    # If critical dependencies are missing, exit gracefully
+    if not can_run:
+        print(f"[CRITICAL ERROR] Cannot continue due to missing critical dependencies.")
+        print(f"[CRITICAL ERROR] Application will now exit.")
+        # Instead of sys.exit(), raise an exception that can be caught by the GUI
+        raise RuntimeError(f"Missing critical dependencies: {', '.join(missing_critical)}")
+    
+    print("=== Starting Direct BoM Extraction ===")
     # Import the main functions from other modules
     from pipeline.extract_bom_tab import main as extract_main
     from pipeline.lookup_price import main as lookup_main  
@@ -331,36 +470,58 @@ def run_main_pipeline_direct(pdf_path, pages, company, output_directory, tabula_
     
     processed_pdf_path = pdf_path
     if force_ocr:
-        print(f"🔍 SPECIAL CASE: Customer {company} requires forced OCR preprocessing")
+        print(f"[SPECIAL] SPECIAL CASE: Customer {company} requires forced OCR preprocessing")
+        
+        # Check OCR dependencies before attempting to use them
         try:
-            from pipeline.ocr_preprocessor import preprocess_pdf_with_ocr
+            from pipeline.ocr_preprocessor import check_ocr_dependencies
+            has_ocr_deps, missing_deps, dep_messages, install_instructions = check_ocr_dependencies()
             
-            # Create OCR processed version of the PDF
-            pdf_dir = Path(pdf_path).parent
-            pdf_name = Path(pdf_path).stem
-            ocr_pdf_path = pdf_dir / f"{pdf_name}_ocr.pdf"
-            
-            print(f"🔍 OCR: Processing {pdf_path} -> {ocr_pdf_path}")
-            success, processed_path, error_msg = preprocess_pdf_with_ocr(
-                pdf_path=pdf_path,
-                output_path=str(ocr_pdf_path),
-                force_ocr=True
-            )
-            
-            if success and processed_path and Path(processed_path).exists():
-                processed_pdf_path = processed_path
-                print(f"✅ OCR: Successfully processed PDF, using {processed_pdf_path}")
-                
-                # Update the environment variable to use the OCR-processed PDF
-                os.environ["BOM_PDF_PATH"] = str(processed_pdf_path)
+            if not has_ocr_deps:
+                print(f"[WARNING] OCR dependencies missing: {', '.join(missing_deps)}")
+                print(f"[WARNING] OCR will be skipped. Application will continue with regular extraction.")
+                for msg in dep_messages:
+                    print(f"[INFO] {msg}")
+                # Continue with original PDF instead of failing
+                print(f"[INFO] Continuing with original PDF: {pdf_path}")
             else:
-                print(f"⚠️ OCR: Failed to process PDF, using original {pdf_path}")
-                if error_msg:
-                    print(f"⚠️ OCR: Error details: {error_msg}")
+                print(f"[OK] All OCR dependencies available")
+                try:
+                    from pipeline.ocr_preprocessor import preprocess_pdf_with_ocr
+                    
+                    # Create OCR processed version of the PDF
+                    pdf_dir = Path(pdf_path).parent
+                    pdf_name = Path(pdf_path).stem
+                    ocr_pdf_path = pdf_dir / f"{pdf_name}_ocr.pdf"
+                    
+                    print(f"[OCR] OCR: Processing {pdf_path} -> {ocr_pdf_path}")
+                    success, processed_path, error_msg = preprocess_pdf_with_ocr(
+                        pdf_path=pdf_path,
+                        output_path=str(ocr_pdf_path),
+                        force_ocr=True
+                    )
+                    
+                    if success and processed_path and Path(processed_path).exists():
+                        processed_pdf_path = processed_path
+                        print(f"[OK] OCR: Successfully processed PDF, using {processed_pdf_path}")
+                        
+                        # Update the environment variable to use the OCR-processed PDF
+                        os.environ["BOM_PDF_PATH"] = str(processed_pdf_path)
+                    else:
+                        print(f"[WARNING] OCR: Failed to process PDF, using original {pdf_path}")
+                        if error_msg:
+                            print(f"[WARNING] OCR: Error details: {error_msg}")
+                        
+                except Exception as ocr_error:
+                    print(f"[ERROR] OCR: Error during preprocessing: {ocr_error}")
+                    print(f"[WARNING] OCR: Continuing with original PDF {pdf_path}")
                 
+        except ImportError as import_error:
+            print(f"[WARNING] OCR: Could not import OCR modules: {import_error}")
+            print(f"[WARNING] OCR: Continuing with original PDF {pdf_path}")
         except Exception as e:
-            print(f"❌ OCR: Error during preprocessing: {e}")
-            print(f"⚠️ OCR: Continuing with original PDF {pdf_path}")
+            print(f"[ERROR] OCR: Unexpected error during OCR dependency check: {e}")
+            print(f"[WARNING] OCR: Continuing with original PDF {pdf_path}")
     
     try:
         print("=== BoMination Pipeline Starting ===")
@@ -489,6 +650,21 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
         review_callback (callable): Function to call for GUI review
         tabula_mode (str): Tabula extraction mode - 'conservative', 'balanced', or 'aggressive'
     """
+    print("=== BoMination Dependency Check ===")
+    can_run, dependency_status, missing_critical, warnings = check_all_dependencies()
+    
+    # Show warnings for missing optional dependencies
+    for warning in warnings:
+        print(f"[WARNING] {warning}")
+    
+    # If critical dependencies are missing, exit gracefully
+    if not can_run:
+        print(f"[CRITICAL ERROR] Cannot continue due to missing critical dependencies.")
+        print(f"[CRITICAL ERROR] Application will now exit.")
+        # Instead of sys.exit(), raise an exception that can be caught by the GUI
+        raise RuntimeError(f"Missing critical dependencies: {', '.join(missing_critical)}")
+    
+    print("=== Starting BoM Extraction with GUI Review ===")
     # Import the main functions from other modules
     from pipeline.extract_main import run_main_extraction_workflow
     from pipeline.extract_main import merge_tables_and_export
@@ -506,9 +682,9 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
     # The GUI review callback will handle the review instead
     os.environ["BOM_SKIP_REVIEW"] = "true"
     
-    print(f"🚀 PIPELINE: Starting pipeline with GUI review for {company}")
-    print(f"🚀 PIPELINE: Review callback provided: {review_callback is not None}")
-    print(f"🚀 PIPELINE: BOM_SKIP_REVIEW set to prevent double review")
+    print(f"[PIPELINE] PIPELINE: Starting pipeline with GUI review for {company}")
+    print(f"[PIPELINE] PIPELINE: Review callback provided: {review_callback is not None}")
+    print(f"[PIPELINE] PIPELINE: BOM_SKIP_REVIEW set to prevent double review")
     
     # Check if this customer requires forced OCR preprocessing
     from omni_cust.customer_config import CUSTOMER_SETTINGS
@@ -518,36 +694,58 @@ def run_main_pipeline_with_gui_review(pdf_path, pages, company, output_directory
     
     processed_pdf_path = pdf_path
     if force_ocr:
-        print(f"🔍 SPECIAL CASE: Customer {company} requires forced OCR preprocessing")
+        print(f"[SPECIAL] SPECIAL CASE: Customer {company} requires forced OCR preprocessing")
+        
+        # Check OCR dependencies before attempting to use them
         try:
-            from pipeline.ocr_preprocessor import preprocess_pdf_with_ocr
+            from pipeline.ocr_preprocessor import check_ocr_dependencies
+            has_ocr_deps, missing_deps, dep_messages, install_instructions = check_ocr_dependencies()
             
-            # Create OCR processed version of the PDF
-            pdf_dir = Path(pdf_path).parent
-            pdf_name = Path(pdf_path).stem
-            ocr_pdf_path = pdf_dir / f"{pdf_name}_ocr.pdf"
-            
-            print(f"🔍 OCR: Processing {pdf_path} -> {ocr_pdf_path}")
-            success, processed_path, error_msg = preprocess_pdf_with_ocr(
-                pdf_path=pdf_path,
-                output_path=str(ocr_pdf_path),
-                force_ocr=True
-            )
-            
-            if success and processed_path and Path(processed_path).exists():
-                processed_pdf_path = processed_path
-                print(f"✅ OCR: Successfully processed PDF, using {processed_pdf_path}")
-                
-                # Update the environment variable to use the OCR-processed PDF
-                os.environ["BOM_PDF_PATH"] = str(processed_pdf_path)
+            if not has_ocr_deps:
+                print(f"[WARNING] OCR dependencies missing: {', '.join(missing_deps)}")
+                print(f"[WARNING] OCR will be skipped. Application will continue with regular extraction.")
+                for msg in dep_messages:
+                    print(f"[INFO] {msg}")
+                # Continue with original PDF instead of failing
+                print(f"[INFO] Continuing with original PDF: {pdf_path}")
             else:
-                print(f"⚠️ OCR: Failed to process PDF, using original {pdf_path}")
-                if error_msg:
-                    print(f"⚠️ OCR: Error details: {error_msg}")
+                print(f"[OK] All OCR dependencies available")
+                try:
+                    from pipeline.ocr_preprocessor import preprocess_pdf_with_ocr
+                    
+                    # Create OCR processed version of the PDF
+                    pdf_dir = Path(pdf_path).parent
+                    pdf_name = Path(pdf_path).stem
+                    ocr_pdf_path = pdf_dir / f"{pdf_name}_ocr.pdf"
+                    
+                    print(f"[OCR] OCR: Processing {pdf_path} -> {ocr_pdf_path}")
+                    success, processed_path, error_msg = preprocess_pdf_with_ocr(
+                        pdf_path=pdf_path,
+                        output_path=str(ocr_pdf_path),
+                        force_ocr=True
+                    )
+                    
+                    if success and processed_path and Path(processed_path).exists():
+                        processed_pdf_path = processed_path
+                        print(f"[OK] OCR: Successfully processed PDF, using {processed_pdf_path}")
+                        
+                        # Update the environment variable to use the OCR-processed PDF
+                        os.environ["BOM_PDF_PATH"] = str(processed_pdf_path)
+                    else:
+                        print(f"[WARNING] OCR: Failed to process PDF, using original {pdf_path}")
+                        if error_msg:
+                            print(f"[WARNING] OCR: Error details: {error_msg}")
+                        
+                except Exception as ocr_error:
+                    print(f"[ERROR] OCR: Error during preprocessing: {ocr_error}")
+                    print(f"[WARNING] OCR: Continuing with original PDF {pdf_path}")
                 
+        except ImportError as import_error:
+            print(f"[WARNING] OCR: Could not import OCR modules: {import_error}")
+            print(f"[WARNING] OCR: Continuing with original PDF {pdf_path}")
         except Exception as e:
-            print(f"❌ OCR: Error during preprocessing: {e}")
-            print(f"⚠️ OCR: Continuing with original PDF {pdf_path}")
+            print(f"[ERROR] OCR: Unexpected error during OCR dependency check: {e}")
+            print(f"[WARNING] OCR: Continuing with original PDF {pdf_path}")
     
     try:
         print("=== BoMination Pipeline Starting (GUI Review Mode) ===")

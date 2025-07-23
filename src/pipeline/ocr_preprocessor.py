@@ -29,7 +29,7 @@ def check_ocrmypdf_installation():
                               capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             version_info = result.stdout.strip()
-            logger.info(f"✅ OCRmyPDF available: {version_info}")
+            logger.info(f"[OK] OCRmyPDF available: {version_info}")
             return True, version_info, None
         else:
             error_msg = f"OCRmyPDF command failed: {result.stderr}"
@@ -70,6 +70,129 @@ def check_tesseract_installation():
                                   capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 version_info = result.stdout.split('\n')[0]  # First line has version
+                logger.info(f"[OK] Tesseract available: {version_info}")
+                return True, version_info, None
+            else:
+                continue  # Try next path
+        except FileNotFoundError:
+            continue  # Try next path
+        except subprocess.TimeoutExpired:
+            continue  # Try next path
+        except Exception:
+            continue  # Try next path
+    
+    # If we get here, Tesseract was not found in any of the common locations
+    error_msg = "Tesseract not found. Please install Tesseract OCR engine."
+    logger.error(f"[ERROR] {error_msg}")
+    return False, None, error_msg
+
+def check_ocr_dependencies():
+    """
+    Comprehensive check for all OCR dependencies.
+    Returns (has_all_deps, missing_deps, install_instructions)
+    """
+    missing_deps = []
+    messages = []
+    
+    # Check OCRmyPDF
+    ocr_available, ocr_version, ocr_error = check_ocrmypdf_installation()
+    if not ocr_available:
+        missing_deps.append("OCRmyPDF")
+        messages.append(f"OCRmyPDF: {ocr_error}")
+    else:
+        messages.append(f"OCRmyPDF: {ocr_version}")
+    
+    # Check Tesseract
+    tesseract_available, tesseract_version, tesseract_error = check_tesseract_installation()
+    if not tesseract_available:
+        missing_deps.append("Tesseract")
+        messages.append(f"Tesseract: {tesseract_error}")
+    else:
+        messages.append(f"Tesseract: {tesseract_version}")
+    
+    # Check Ghostscript (needed by OCRmyPDF)
+    gs_available, gs_version, gs_error = check_ghostscript_installation()
+    if not gs_available:
+        missing_deps.append("Ghostscript")
+        messages.append(f"Ghostscript: {gs_error}")
+    else:
+        messages.append(f"Ghostscript: {gs_version}")
+    
+    has_all_deps = len(missing_deps) == 0
+    install_instructions = get_ocr_installation_instructions() if missing_deps else None
+    
+    return has_all_deps, missing_deps, messages, install_instructions
+
+def check_ghostscript_installation():
+    """
+    Check if Ghostscript is available (required by OCRmyPDF).
+    Returns (success, version_info, error_message)
+    """
+    # List of common Ghostscript installation paths on Windows
+    common_paths = [
+        'gs',  # From PATH
+        'gswin64c',  # 64-bit console version
+        'gswin32c',  # 32-bit console version
+        r'C:\Program Files\gs\gs*\bin\gswin64c.exe',
+        r'C:\Program Files (x86)\gs\gs*\bin\gswin32c.exe',
+        r'C:\ProgramData\chocolatey\bin\gs.exe',
+    ]
+    
+    import glob
+    
+    for gs_pattern in common_paths:
+        try:
+            # Handle glob patterns
+            if '*' in gs_pattern:
+                matching_paths = glob.glob(gs_pattern)
+                if matching_paths:
+                    gs_path = matching_paths[0]  # Use first match
+                else:
+                    continue
+            else:
+                gs_path = gs_pattern
+            
+            # Try to run ghostscript --version
+            result = subprocess.run([gs_path, '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                version_info = result.stdout.strip()
+                logger.info(f"[OK] Ghostscript available: {version_info}")
+                return True, version_info, None
+            else:
+                continue  # Try next path
+        except FileNotFoundError:
+            continue  # Try next path
+        except subprocess.TimeoutExpired:
+            continue  # Try next path
+        except Exception:
+            continue  # Try next path
+    
+    # If we get here, Ghostscript was not found
+    error_msg = "Ghostscript not found. Please install Ghostscript."
+    logger.error(f"[ERROR] {error_msg}")
+    return False, None, error_msg
+    """
+    Check if Tesseract OCR is available (required by OCRmyPDF).
+    Returns (success, version_info, error_message)
+    """
+    # List of common Tesseract installation paths on Windows
+    common_paths = [
+        'tesseract',  # From PATH
+        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+        r'C:\ProgramData\chocolatey\bin\tesseract.exe',
+        r'C:\ProgramData\chocolatey\lib\tesseract\tools\tesseract.exe',
+        r'C:\tools\tesseract\tesseract.exe',
+    ]
+    
+    for tesseract_path in common_paths:
+        try:
+            # Try to run tesseract --version
+            result = subprocess.run([tesseract_path, '--version'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                version_info = result.stdout.split('\n')[0]  # First line has version
                 logger.info(f"✅ Tesseract available: {version_info}")
                 return True, version_info, None
             else:
@@ -83,7 +206,7 @@ def check_tesseract_installation():
     
     # If we get here, Tesseract was not found in any of the common locations
     error_msg = "Tesseract not found. Please install Tesseract OCR engine."
-    logger.error(f"❌ {error_msg}")
+    logger.error(f"[ERROR] {error_msg}")
     return False, None, error_msg
 
 def is_pdf_searchable(pdf_path):
@@ -180,7 +303,7 @@ def is_pdf_searchable(pdf_path):
         logger.warning(f"PyMuPDF method failed: {e}")
     
     # If all methods fail, assume it's image-based
-    logger.info(f"⚠️ PDF appears to be image-based or has no searchable text")
+    logger.info(f"[WARNING] PDF appears to be image-based or has no searchable text")
     return False
 
 def process_pdf_with_ocr(pdf_path, output_path=None, force_ocr=False):
@@ -229,7 +352,7 @@ def preprocess_pdf_for_table_extraction(pdf_path, output_path=None, enhance_for_
     try:
         import ocrmypdf
         
-        logger.info("🔧 Applying table-optimized OCR settings...")
+        logger.info("Applying table-optimized OCR settings...")
         logger.info("   • Force OCR: True")
         logger.info("   • Deskew: True") 
         logger.info("   • Clean: True")
@@ -282,15 +405,15 @@ def preprocess_pdf_for_table_extraction(pdf_path, output_path=None, enhance_for_
         )
         
         if os.path.exists(output_path):
-            logger.info(f"✅ Table-optimized OCR preprocessing completed: {output_path}")
+            logger.info(f"[OK] Table-optimized OCR preprocessing completed: {output_path}")
             return True, output_path, None
         else:
-            logger.error("❌ OCR preprocessing failed - output file not created")
+            logger.error("[ERROR] OCR preprocessing failed - output file not created")
             return False, pdf_path, "Output file not created"
             
     except Exception as e:
         error_msg = f"Table-optimized OCR preprocessing failed: {e}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f"[ERROR] {error_msg}")
         return False, pdf_path, error_msg
 
 
@@ -311,7 +434,7 @@ def preprocess_pdf_with_ocr(pdf_path, output_path=None, force_ocr=False):
     # Validate input
     if not pdf_path.exists():
         error_msg = f"PDF file not found: {pdf_path}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f"[ERROR] {error_msg}")
         return False, None, error_msg
     
     # Check if OCR is available
@@ -326,7 +449,7 @@ def preprocess_pdf_with_ocr(pdf_path, output_path=None, force_ocr=False):
     
     # Check if PDF already has searchable text (unless forced)
     if not force_ocr and is_pdf_searchable(pdf_path):
-        logger.info("📝 PDF already appears to have searchable text, skipping OCR")
+        logger.info("[INFO] PDF already appears to have searchable text, skipping OCR")
         return True, str(pdf_path), None
     
     # Setup output path
@@ -337,11 +460,11 @@ def preprocess_pdf_with_ocr(pdf_path, output_path=None, force_ocr=False):
     else:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    logger.info(f"🔍 Starting OCR preprocessing: {pdf_path.name}")
-    logger.info(f"📄 Input: {pdf_path}")
-    logger.info(f"📄 Output: {output_path}")
-    
+
+    logger.info(f"[INFO] Starting OCR preprocessing: {pdf_path.name}")
+    logger.info(f"[INFO] Input: {pdf_path}")
+    logger.info(f"[INFO] Output: {output_path}")
+
     try:
         # Import ocrmypdf here to avoid import issues if not available
         import ocrmypdf
@@ -364,17 +487,17 @@ def preprocess_pdf_with_ocr(pdf_path, output_path=None, force_ocr=False):
         )
         
         if output_path.exists():
-            logger.info(f"✅ OCR preprocessing completed successfully")
-            logger.info(f"📁 OCR'd PDF saved to: {output_path}")
+            logger.info(f"[OK] OCR preprocessing completed successfully")
+            logger.info(f"[INFO] OCR'd PDF saved to: {output_path}")
             return True, str(output_path), None
         else:
             error_msg = "OCR completed but output file not found"
-            logger.error(f"❌ {error_msg}")
+            logger.error(f"[ERROR] {error_msg}")
             return False, None, error_msg
             
     except Exception as e:
         error_msg = f"OCR preprocessing failed: {str(e)}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f"[ERROR] {error_msg}")
         
         # Clean up partial output
         if output_path.exists():
@@ -411,7 +534,7 @@ def cleanup_ocr_temp_files(ocr_pdf_path):
                 logger.info(f"🧹 Cleaned up OCR file: {ocr_path}")
                 
     except Exception as e:
-        logger.warning(f"⚠️ Could not clean up OCR temp files: {e}")
+        logger.warning(f"[WARNING] Could not clean up OCR temp files: {e}")
 
 def get_ocr_installation_instructions():
     """
@@ -480,20 +603,20 @@ def test_ocr_functionality():
     print("\n1. Checking OCRmyPDF installation...")
     ocr_ok, ocr_version, ocr_error = check_ocrmypdf_installation()
     if not ocr_ok:
-        print(f"❌ OCRmyPDF: {ocr_error}")
+        print(f"[ERROR] OCRmyPDF: {ocr_error}")
         print(get_ocr_installation_instructions())
         return False
-    print(f"✅ OCRmyPDF: {ocr_version}")
-    
+    print(f"[OK] OCRmyPDF: {ocr_version}")
+
     print("\n2. Checking Tesseract installation...")
     tesseract_ok, tesseract_version, tesseract_error = check_tesseract_installation()
     if not tesseract_ok:
-        print(f"❌ Tesseract: {tesseract_error}")
+        print(f"[ERROR] Tesseract: {tesseract_error}")
         print(get_ocr_installation_instructions())
         return False
-    print(f"✅ Tesseract: {tesseract_version}")
-    
-    print("\n✅ All OCR components are available!")
+    print(f"[OK] Tesseract: {tesseract_version}")
+
+    print("\n[INFO] All OCR components are available!")
     return True
 
 if __name__ == "__main__":

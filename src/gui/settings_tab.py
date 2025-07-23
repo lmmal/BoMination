@@ -72,7 +72,7 @@ class SettingsTab:
             roi_frame, 
             text="When enabled, you can manually select table areas on each page for more precise extraction.\n"
                  "This is useful when automatic table detection fails or you need to select specific regions.\n"
-                 "💡 TIP: Try ROI mode if automatic extraction finds tables but they contain poor quality text.",
+                 "TIP: Try ROI mode if automatic extraction finds tables but they contain poor quality text.",
             font=("Segoe UI", 9),
             bootstyle="secondary",
             justify=tk.LEFT

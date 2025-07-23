@@ -23,18 +23,18 @@ def show_review_window(merged_df, parent_window=None):
     Returns:
         pandas DataFrame with any edits made by the user
     """
-    print(f"📝 GUI REVIEW: Creating review window for dataframe with shape {merged_df.shape}")
-    print(f"📝 GUI REVIEW: DataFrame columns: {merged_df.columns.tolist()}")
-    print(f"📝 GUI REVIEW: DataFrame dtypes: {merged_df.dtypes.to_dict()}")
-    print(f"📝 GUI REVIEW: DataFrame head:\n{merged_df.head()}")
-    
+    print(f"GUI REVIEW: Creating review window for dataframe with shape {merged_df.shape}")
+    print(f"GUI REVIEW: DataFrame columns: {merged_df.columns.tolist()}")
+    print(f"GUI REVIEW: DataFrame dtypes: {merged_df.dtypes.to_dict()}")
+    print(f"GUI REVIEW: DataFrame head:\n{merged_df.head()}")
+
     # Validate input
     if merged_df is None:
-        print("❌ GUI REVIEW: ERROR - merged_df is None!")
+        print("GUI REVIEW: ERROR - merged_df is None!")
         return None
     
     if merged_df.empty:
-        print("❌ GUI REVIEW: ERROR - merged_df is empty!")
+        print("GUI REVIEW: ERROR - merged_df is empty!")
         return merged_df
     
     # Create a new top-level window
@@ -70,15 +70,15 @@ def show_review_window(merged_df, parent_window=None):
     
     # Instructions with better formatting
     instructions = tk.Label(main_frame, 
-                           text="📋 Review the merged table below. You can edit values directly in the table.\n"
-                                "💾 Click 'Save & Continue' when done, or 'Cancel' to use the data as-is.\n"
-                                "⌨️ Press ESC to exit fullscreen mode.",
+                           text="Review the merged table below. You can edit values directly in the table.\n"
+                                "Click 'Save & Continue' when done, or 'Cancel' to use the data as-is.\n"
+                                "Press ESC to exit fullscreen mode.",
                            font=("Arial", 12), justify='left', bg='white', fg='darkgreen')
     instructions.pack(pady=(0, 15))
     
     # Add table info
     table_info = tk.Label(main_frame, 
-                         text=f"📊 Table: {merged_df.shape[0]} rows × {merged_df.shape[1]} columns | "
+                         text=f"Table: {merged_df.shape[0]} rows × {merged_df.shape[1]} columns | "
                               f"Columns: {', '.join(str(col) for col in merged_df.columns.tolist()[:5])}{'...' if len(merged_df.columns) > 5 else ''}",
                          font=("Arial", 10), bg='white', fg='darkslategray')
     table_info.pack(pady=(0, 10))
@@ -161,9 +161,9 @@ def show_review_window(merged_df, parent_window=None):
             table_widget.parentframe.columnconfigure(0, weight=1)  # Column 0 gets the weight
             table_widget.parentframe.columnconfigure(1, weight=0)  # Column 1 gets no weight
             
-            print(f"📝 GUI REVIEW: Successfully hid row header and reconfigured grid layout")
+            print(f"GUI REVIEW: Successfully hid row header and reconfigured grid layout")
         except Exception as hide_error:
-            print(f"📝 GUI REVIEW: Could not hide row header: {hide_error}")
+            print(f"GUI REVIEW: Could not hide row header: {hide_error}")
         
         # Apply custom column widths after table is created
         try:
@@ -177,27 +177,27 @@ def show_review_window(merged_df, parent_window=None):
             
             # Force redraw to apply the new column widths
             table_widget.redraw()
-            print(f"📝 GUI REVIEW: Applied custom column widths")
+            print(f"GUI REVIEW: Applied custom column widths")
             
         except Exception as width_error:
-            print(f"📝 GUI REVIEW: Could not apply custom column widths: {width_error}")
+            print(f"GUI REVIEW: Could not apply custom column widths: {width_error}")
             # Fall back to uniform wider columns
             try:
                 # Set all columns to a wider default
                 for col in merged_df.columns:
                     table_widget.model.columnwidths[col] = 250
                 table_widget.redraw()
-                print(f"📝 GUI REVIEW: Applied uniform wider column widths")
+                print(f"GUI REVIEW: Applied uniform wider column widths")
             except Exception as fallback_error:
-                print(f"📝 GUI REVIEW: Could not apply fallback widths: {fallback_error}")
+                print(f"GUI REVIEW: Could not apply fallback widths: {fallback_error}")
         
-        print(f"📝 GUI REVIEW: Created editable table with pandastable")
-        print(f"📝 GUI REVIEW: Table dimensions: {merged_df.shape}")
-        print(f"📝 GUI REVIEW: Sample data:\n{merged_df.head(2)}")
+        print(f"GUI REVIEW: Created editable table with pandastable")
+        print(f"GUI REVIEW: Table dimensions: {merged_df.shape}")
+        print(f"GUI REVIEW: Sample data:\n{merged_df.head(2)}")
         
     except Exception as e:
-        print(f"📝 GUI REVIEW: Could not create pandastable: {e}")
-        print(f"📝 GUI REVIEW: Creating fallback text view...")
+        print(f"GUI REVIEW: Could not create pandastable: {e}")
+        print(f"GUI REVIEW: Creating fallback text view...")
         
         # Enhanced fallback to text view with better formatting
         text_widget = tk.Text(table_frame, wrap='none', font=("Courier", 9))
@@ -222,21 +222,21 @@ def show_review_window(merged_df, parent_window=None):
         
         # Add a label to show this is read-only
         readonly_label = tk.Label(main_frame, 
-                                text="⚠️ Table is read-only (pandastable not available). Data will be used as-is.",
+                                text="[WARNING] Table is read-only (pandastable not available). Data will be used as-is.",
                                 font=("Arial", 10), fg='orange')
         readonly_label.pack(pady=(5, 0))
     
     # Button functions
     def save_and_continue():
-        print(f"📝 GUI REVIEW: User clicked Save & Continue")
+        print(f"GUI REVIEW: User clicked Save & Continue")
         if table_widget is not None:
             try:
                 # Get edited data from table
                 edited_data = table_widget.model.df.copy()
                 result_df[0] = edited_data
-                print(f"📝 GUI REVIEW: Retrieved edited data, shape: {edited_data.shape}")
+                print(f"GUI REVIEW: Retrieved edited data, shape: {edited_data.shape}")
             except Exception as e:
-                print(f"📝 GUI REVIEW: Could not get edited data: {e}")
+                print(f"GUI REVIEW: Could not get edited data: {e}")
                 result_df[0] = merged_df.copy()
         else:
             result_df[0] = merged_df.copy()
@@ -245,7 +245,7 @@ def show_review_window(merged_df, parent_window=None):
         review_window.destroy()
     
     def cancel_review():
-        print(f"📝 GUI REVIEW: User clicked Cancel")
+        print(f"GUI REVIEW: User clicked Cancel")
         result_df[0] = merged_df.copy()
         review_completed[0] = True
         review_window.destroy()
@@ -276,10 +276,10 @@ def show_review_window(merged_df, parent_window=None):
                 
                 # Redraw table
                 table_widget.redraw()
-                print(f"📝 GUI REVIEW: Auto-resized columns")
+                print(f"GUI REVIEW: Auto-resized columns")
                 
             except Exception as e:
-                print(f"📝 GUI REVIEW: Could not auto-resize columns: {e}")
+                print(f"GUI REVIEW: Could not auto-resize columns: {e}")
     
     # Exit fullscreen button
     def toggle_fullscreen():
@@ -296,25 +296,25 @@ def show_review_window(merged_df, parent_window=None):
     
     # Auto-resize button (only show if table widget exists)
     if table_widget is not None:
-        auto_resize_button = tk.Button(button_frame, text="📏 Auto-Resize Columns", command=auto_resize_columns,
+        auto_resize_button = tk.Button(button_frame, text="Auto-Resize Columns", command=auto_resize_columns,
                                      bg='lightyellow', font=("Arial", 11), padx=15, pady=5)
         auto_resize_button.pack(side='left', padx=(0, 10))
     
-    fullscreen_button = tk.Button(button_frame, text="📺 Toggle Fullscreen", command=toggle_fullscreen,
+    fullscreen_button = tk.Button(button_frame, text="Toggle Fullscreen", command=toggle_fullscreen,
                                  bg='lightblue', font=("Arial", 11), padx=15, pady=5)
     fullscreen_button.pack(side='left', padx=(0, 10))
     
-    save_button = tk.Button(button_frame, text="✅ Save & Continue", command=save_and_continue,
+    save_button = tk.Button(button_frame, text="Save & Continue", command=save_and_continue,
                            bg='lightgreen', font=("Arial", 14, "bold"), padx=25, pady=8)
     save_button.pack(side='left', padx=(0, 10))
     
-    cancel_button = tk.Button(button_frame, text="❌ Cancel", command=cancel_review,
+    cancel_button = tk.Button(button_frame, text="Cancel", command=cancel_review,
                              bg='lightcoral', font=("Arial", 14, "bold"), padx=25, pady=8)
     cancel_button.pack(side='left')
     
     # Handle window close
     def on_window_close():
-        print(f"📝 GUI REVIEW: Window closed without explicit action")
+        print(f"GUI REVIEW: Window closed without explicit action")
         result_df[0] = merged_df.copy()
         review_completed[0] = True
         review_window.destroy()
@@ -322,10 +322,10 @@ def show_review_window(merged_df, parent_window=None):
     review_window.protocol("WM_DELETE_WINDOW", on_window_close)
     
     # Wait for the review to complete
-    print(f"📝 GUI REVIEW: Waiting for user review...")
+    print(f"GUI REVIEW: Waiting for user review...")
     review_window.wait_window()
     
-    print(f"📝 GUI REVIEW: Review completed, returning dataframe with shape: {result_df[0].shape}")
+    print(f"GUI REVIEW: Review completed, returning dataframe with shape: {result_df[0].shape}")
     return result_df[0]
 
 
@@ -334,7 +334,7 @@ def review_and_edit_dataframe_cli(df):
     Review and edit dataframe for command-line usage.
     This is a simpler version for when running outside the main GUI.
     """
-    print(f"📝 REVIEW DEBUG: Starting review window for dataframe with shape {df.shape}")
+    print(f"REVIEW DEBUG: Starting review window for dataframe with shape {df.shape}")
     
     try:
         # Create the window with better configuration
@@ -353,7 +353,7 @@ def review_and_edit_dataframe_cli(df):
         y = (root.winfo_screenheight() // 2) - (800 // 2)
         root.geometry(f"1200x800+{x}+{y}")
         
-        print(f"📝 REVIEW DEBUG: Window created and positioned")
+        print(f"REVIEW DEBUG: Window created and positioned")
         
         # Main frame
         main_frame = tk.Frame(root)
@@ -378,7 +378,7 @@ def review_and_edit_dataframe_cli(df):
         try:
             from pandastable import Table
             
-            print(f"📝 REVIEW DEBUG: Creating pandastable...")
+            print(f"REVIEW DEBUG: Creating pandastable...")
             pt = Table(table_frame, dataframe=df, showtoolbar=True, showstatusbar=True, 
                       showindex=False, x_start=0)  # Disable row index and set left margin to 0
             pt.show()
@@ -386,25 +386,25 @@ def review_and_edit_dataframe_cli(df):
             # Hide the row header to save space
             try:
                 pt.hideRowHeader()
-                print(f"📝 REVIEW DEBUG: Row header hidden")
+                print(f"REVIEW DEBUG: Row header hidden")
             except:
-                print(f"📝 REVIEW DEBUG: Could not hide row header")
+                print(f"REVIEW DEBUG: Could not hide row header")
             
-            print(f"📝 REVIEW DEBUG: Pandastable created successfully")
+            print(f"REVIEW DEBUG: Pandastable created successfully")
             
             # Variable to hold the final result
             result_df = [df.copy()]
             
             # Button function
             def continue_with_data():
-                print(f"📝 REVIEW DEBUG: User clicked continue")
+                print(f"REVIEW DEBUG: User clicked continue")
                 try:
                     # Get the current dataframe from the table
                     current_df = pt.model.df
                     result_df[0] = current_df.copy()
-                    print(f"📝 REVIEW DEBUG: Data retrieved from table, shape: {current_df.shape}")
+                    print(f"REVIEW DEBUG: Data retrieved from table, shape: {current_df.shape}")
                 except Exception as e:
-                    print(f"📝 REVIEW DEBUG: Error getting data from table: {e}")
+                    print(f"REVIEW DEBUG: Error getting data from table: {e}")
                     result_df[0] = df.copy()
                 
                 root.destroy()
@@ -426,15 +426,15 @@ def review_and_edit_dataframe_cli(df):
             
             root.protocol("WM_DELETE_WINDOW", on_closing)
             
-            print(f"📝 REVIEW DEBUG: Starting mainloop...")
+            print(f"REVIEW DEBUG: Starting mainloop...")
             root.mainloop()
             
-            print(f"📝 REVIEW DEBUG: Review completed, returning dataframe with shape: {result_df[0].shape}")
+            print(f"REVIEW DEBUG: Review completed, returning dataframe with shape: {result_df[0].shape}")
             return result_df[0]
             
         except Exception as e:
-            print(f"📝 REVIEW DEBUG: Error creating pandastable: {e}")
-            print(f"📝 REVIEW DEBUG: Falling back to text display...")
+            print(f"REVIEW DEBUG: Error creating pandastable: {e}")
+            print(f"REVIEW DEBUG: Falling back to text display...")
             
             # Fallback to text view
             text_widget = tk.Text(table_frame, wrap='word', font=("Courier", 9))
@@ -451,20 +451,20 @@ def review_and_edit_dataframe_cli(df):
             
             # Add read-only warning
             warning_label = tk.Label(main_frame, 
-                                   text="⚠️ Table is read-only (pandastable not available). Data will be used as-is.",
+                                   text="[WARNING] Table is read-only (pandastable not available). Data will be used as-is.",
                                    font=("Arial", 10), fg='orange')
             warning_label.pack(pady=(5, 0))
             
             # Button function for read-only mode
             def continue_readonly():
-                print(f"📝 REVIEW DEBUG: User continued with read-only data")
+                print(f"REVIEW DEBUG: User continued with read-only data")
                 root.destroy()
             
             # Button frame for read-only mode
             button_frame = tk.Frame(main_frame)
             button_frame.pack(fill='x', pady=(10, 0))
             
-            continue_button = tk.Button(button_frame, text="✅ Continue", 
+            continue_button = tk.Button(button_frame, text="Continue", 
                                        command=continue_readonly,
                                        bg='lightgreen', font=("Arial", 12, "bold"))
             continue_button.pack(side='right')
@@ -472,14 +472,14 @@ def review_and_edit_dataframe_cli(df):
             # Handle window close for read-only mode
             root.protocol("WM_DELETE_WINDOW", continue_readonly)
             
-            print(f"📝 REVIEW DEBUG: Starting mainloop (read-only mode)...")
+            print(f"REVIEW DEBUG: Starting mainloop (read-only mode)...")
             root.mainloop()
             
-            print(f"📝 REVIEW DEBUG: Review completed (read-only), returning original dataframe")
+            print(f"REVIEW DEBUG: Review completed (read-only), returning original dataframe")
             return df.copy()
 
     except Exception as e:
-        print(f"📝 REVIEW DEBUG: Major error in review window: {e}")
+        print(f"REVIEW DEBUG: Major error in review window: {e}")
         import traceback
         traceback.print_exc()
         return df.copy()
